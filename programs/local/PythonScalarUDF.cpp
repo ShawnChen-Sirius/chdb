@@ -1,4 +1,5 @@
 #include "PythonScalarUDF.h"
+#include "ChdbPyType.h"
 #include "PythonConversion.h"
 #include "FieldToPython.h"
 
@@ -6,17 +7,11 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/DataTypeDate.h>
 #include <DataTypes/DataTypeDateTime.h>
 #include <DataTypes/DataTypeDateTime64.h>
-#include <DataTypes/DataTypeArray.h>
-#include <DataTypes/DataTypeTuple.h>
-#include <Columns/ColumnString.h>
-#include <Columns/ColumnsNumber.h>
-#include <Columns/ColumnArray.h>
-#include <Columns/ColumnTuple.h>
+#include <DataTypes/DataTypeFactory.h>
 #include <Common/Exception.h>
-#include <cmath>
-#include <Core/DecimalFunctions.h>
 
 
 namespace DB
@@ -64,12 +59,155 @@ struct ParameterKind
     }
 };
 
+enum class PythonTypeObject : uint8_t {
+	INVALID,
+	BASE,
+	STRING,
+	TYPE,
+};
+
+PythonTypeObject getPythonObjectType(const py::handle &type_object) {
+	if (py::isinstance<py::type>(type_object))
+		return PythonTypeObject::BASE;
+
+	if (py::isinstance<py::str>(type_object))
+		return PythonTypeObject::STRING;
+
+	if (py::isinstance<ChdbPyType>(type_object))
+		return PythonTypeObject::TYPE;
+
+	return PythonTypeObject::INVALID;
+}
+
 py::object getSignature(const py::function & udf)
 {
+    const int32_t PYTHON_3_10_HEX = 0x030a00f0;
+	const auto python_version = PY_VERSION_HEX;
+
     auto signature_func = py::module_::import("inspect").attr("signature");
-    if (PY_VERSION_HEX >= 0x030a00f0)
+    if (python_version >= PYTHON_3_10_HEX)
         return signature_func(udf, py::arg("eval_str") = true);
     return signature_func(udf);
+}
+
+DB::DataTypePtr fromNumpyType(const py::object & type)
+{
+    auto obj = type();
+    if (!py::hasattr(obj, "dtype"))
+        return nullptr;
+
+    auto type_str = std::string(py::str(obj.attr("dtype")));
+    if (type_str == "bool")    return DB::DataTypeFactory::instance().get("Bool");
+    if (type_str == "int8")    return std::make_shared<DB::DataTypeInt8>();
+    if (type_str == "uint8")   return std::make_shared<DB::DataTypeUInt8>();
+    if (type_str == "int16")   return std::make_shared<DB::DataTypeInt16>();
+    if (type_str == "uint16")  return std::make_shared<DB::DataTypeUInt16>();
+    if (type_str == "int32")   return std::make_shared<DB::DataTypeInt32>();
+    if (type_str == "uint32")  return std::make_shared<DB::DataTypeUInt32>();
+    if (type_str == "int64")   return std::make_shared<DB::DataTypeInt64>();
+    if (type_str == "uint64")  return std::make_shared<DB::DataTypeUInt64>();
+    if (type_str == "float16") return std::make_shared<DB::DataTypeFloat32>();
+    if (type_str == "float32") return std::make_shared<DB::DataTypeFloat32>();
+    if (type_str == "float64") return std::make_shared<DB::DataTypeFloat64>();
+
+    return nullptr;
+}
+
+DB::DataTypePtr fromPythonType(const py::object & annotation)
+{
+    auto builtins = py::module_::import("builtins");
+
+    if (annotation.is(builtins.attr("bool")))
+        return DB::DataTypeFactory::instance().get("Bool");
+
+    if (annotation.is(builtins.attr("int")))
+        return std::make_shared<DB::DataTypeInt64>();
+
+    if (annotation.is(builtins.attr("float")))
+        return std::make_shared<DB::DataTypeFloat64>();
+
+    if (annotation.is(builtins.attr("str")))
+        return std::make_shared<DB::DataTypeString>();
+
+    if (annotation.is(builtins.attr("bytes")))
+        return std::make_shared<DB::DataTypeString>();
+
+    if (annotation.is(builtins.attr("bytearray")))
+        return std::make_shared<DB::DataTypeString>();
+
+    auto datetime_mod = py::module_::import("datetime");
+    if (annotation.is(datetime_mod.attr("date")))
+        return std::make_shared<DB::DataTypeDate>();
+    if (annotation.is(datetime_mod.attr("datetime")))
+        return std::make_shared<DB::DataTypeDateTime64>(3);
+
+    auto numpy_result = fromNumpyType(annotation);
+    if (numpy_result)
+        return numpy_result;
+
+    throw DB::Exception(
+        DB::ErrorCodes::BAD_ARGUMENTS,
+        "Cannot convert Python type '{}' to a ClickHouse type",
+        std::string(py::str(annotation)));
+}
+
+DB::DataTypePtr fromString(const py::object & annotation)
+{
+    auto string_value = std::string(py::str(annotation));
+    return ChdbPyType(string_value).dataType();
+}
+
+DB::DataTypePtr fromChdbPyType(const py::object & annotation)
+{
+    std::shared_ptr<ChdbPyType> type_object;
+    if (!py::try_cast<std::shared_ptr<ChdbPyType>>(annotation, type_object)) {
+        throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS, "Expected ChdbPyType type, got '{}'",
+            std::string(py::str(annotation.get_type())));
+    }
+	return type_object->dataType();
+}
+
+DB::DataTypePtr annotationToDataType(const py::object & annotation)
+{
+    auto type_object = getPythonObjectType(annotation);
+    switch (type_object)
+    {
+        case PythonTypeObject::BASE:
+            return fromPythonType(annotation);
+        case PythonTypeObject::STRING:
+            return fromString(annotation);
+        case PythonTypeObject::TYPE:
+            return fromChdbPyType(annotation);
+        case PythonTypeObject::INVALID:
+        default:
+            throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS, "Unknown Python UDF return type annotation: {}",
+                std::string(py::str(annotation.get_type())));
+    }
+}
+
+DB::DataTypePtr inferReturnType(const String & name, const py::object & signature)
+{
+    auto return_annotation = signature.attr("return_annotation");
+    auto empty = py::module_::import("inspect").attr("Signature").attr("empty");
+
+    if (!py::none().is(return_annotation) && !empty.is(return_annotation))
+    {
+        auto data_type = annotationToDataType(return_annotation);
+        if (data_type)
+            return DB::makeNullable(data_type);
+
+        throw DB::Exception(
+            DB::ErrorCodes::BAD_ARGUMENTS,
+            "Python UDF '{}': return_type not specified and no valid return type annotation found. "
+            "Use -> ChdbType annotation or pass return_type explicitly.",
+            name);
+    }
+
+    throw DB::Exception(
+        DB::ErrorCodes::BAD_ARGUMENTS,
+        "Python UDF '{}': return_type not specified and no return type annotation found. "
+            "Use -> ChdbType annotation or pass return_type explicitly.",
+        name);
 }
 
 } // anonymous namespace
@@ -81,9 +219,12 @@ PythonScalarUDF::PythonScalarUDF(
     DB::DataTypePtr return_type_)
     : name(name_)
     , func(std::move(func_))
-    , return_type(DB::makeNullable(std::move(return_type_)))
+    , return_type(return_type_ ? DB::makeNullable(std::move(return_type_)) : nullptr)
     , num_args(0)
     , is_variadic(true)
+{}
+
+void PythonScalarUDF::initSignature()
 {
     try
     {
@@ -119,11 +260,16 @@ PythonScalarUDF::PythonScalarUDF(
             is_variadic = false;
             num_args = positional_count;
         }
+
+        if (!return_type)
+            return_type = inferReturnType(name, signature);
     }
-    catch (py::error_already_set &)
+    catch (py::error_already_set & e)
     {
-        is_variadic = true;
-        num_args = 0;
+        throw DB::Exception(
+            DB::ErrorCodes::BAD_ARGUMENTS,
+            "Python UDF '{}': failed to inspect function signature: {}",
+            name, e.what());
     }
 }
 

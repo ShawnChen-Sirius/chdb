@@ -27,8 +27,10 @@ void createFunction(
 {
     try
     {
-        auto type = toChdbPyType(return_type);
-        registerPythonUDF(name, func, type->dataType());
+        DB::DataTypePtr data_type = nullptr;
+        if (!return_type.is_none())
+            data_type = toChdbPyType(return_type)->dataType();
+        registerPythonUDF(name, func, std::move(data_type));
     }
     catch (const DB::Exception & e)
     {
@@ -58,16 +60,20 @@ void registerGlobalFunctions(py::module_ & m)
         &createFunction,
         py::arg("name"),
         py::arg("func"),
-        py::arg("return_type"),
+        py::arg("return_type") = py::none(),
         "Register a Python scalar UDF globally.\n\n"
         "Args:\n"
         "    name (str): Function name to use in SQL queries.\n"
         "    func (callable): Python function to call for each row.\n"
-        "    return_type: Return type (ChdbType).\n"
+        "    return_type: Return type (ChdbType or str). Optional; if omitted,\n"
+        "                 inferred from the function's return type annotation.\n"
         "Example:\n"
         "    import chdb\n"
         "    from chdb.sqltypes import INT64\n"
-        "    chdb.create_function('add_int', lambda a, b: a + b, INT64)");
+        "    chdb.create_function('add_int', lambda a, b: a + b, INT64)\n"
+        "    # Or with annotation:\n"
+        "    def add_int(a, b) -> int: return a + b\n"
+        "    chdb.create_function('add_int', add_int)");
 
     m.def(
         "drop_function",

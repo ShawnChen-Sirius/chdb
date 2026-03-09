@@ -19,6 +19,8 @@ public:
 
     ~PythonScalarUDF() override;
 
+    void initSignature();
+
     String getName() const override { return name; }
     bool isVariadic() const override { return is_variadic; }
     size_t getNumberOfArguments() const override { return num_args; }

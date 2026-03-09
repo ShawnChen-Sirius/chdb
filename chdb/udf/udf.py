@@ -10,16 +10,17 @@ from xml.etree import ElementTree as ET
 import chdb
 
 
-def func(return_type):
+def func(return_type=None):
     """Decorator to register a Python function as a chDB SQL function.
 
     Uses the native Python UDF mechanism (create_function) for direct
     in-process invocation without subprocess overhead.
 
     Args:
-        return_type: ClickHouse return type. Accepts either:
+        return_type: ClickHouse return type. Optional. Accepts:
             - A ChdbType instance: e.g. ``INT64``, ``STRING``, ``FLOAT64``
             - A type string: e.g. ``"Int64"``, ``"String"``, ``"DateTime64(3)"``
+            - ``None`` (default): inferred from the function's return type annotation.
 
     Returns:
         The original function, unchanged. It remains callable as normal Python
@@ -38,6 +39,11 @@ def func(return_type):
             @func("String")
             def greet(name):
                 return f"Hello, {name}!"
+
+            # Inferred from annotation:
+            @func()
+            def multiply(a, b) -> int:
+                return a * b
 
     To remove a registered function, use ``chdb.drop_function(name)``.
     """

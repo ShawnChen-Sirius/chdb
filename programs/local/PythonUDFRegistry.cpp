@@ -39,6 +39,7 @@ void PythonUDFRegistry::registerUDF(
         throw DB::Exception(DB::ErrorCodes::FUNCTION_ALREADY_EXISTS, "Python UDF '{}' is already registered", name);
 
     auto udf = std::make_shared<PythonScalarUDF>(name, std::move(func), std::move(return_type));
+    udf->initSignature();
     udfs[name] = std::move(udf);
 }
 
