@@ -10,13 +10,19 @@ from xml.etree import ElementTree as ET
 import chdb
 
 
-def func(return_type=None):
+def func(arg_types=None, return_type=None):
     """Decorator to register a Python function as a chDB SQL function.
 
     Uses the native Python UDF mechanism (create_function) for direct
     in-process invocation without subprocess overhead.
 
     Args:
+        arg_types: List of argument types. Optional. Each element accepts:
+            - A ChdbType instance: e.g. ``INT64``
+            - A type string: e.g. ``"Int64"``
+            - A Python type: e.g. ``int``, ``float``, ``str``
+            - ``None`` (default): inferred from parameter type annotations.
+            If provided, must specify types for ALL parameters.
         return_type: ClickHouse return type. Optional. Accepts:
             - A ChdbType instance: e.g. ``INT64``, ``STRING``, ``FLOAT64``
             - A type string: e.g. ``"Int64"``, ``"String"``, ``"DateTime64(3)"``
@@ -32,24 +38,24 @@ def func(return_type=None):
             from chdb import func
             from chdb.sqltypes import INT64, STRING
 
-            @func(INT64)
+            @func([INT64, INT64], INT64)
             def add(a, b):
                 return a + b
 
-            @func("String")
+            @func(return_type="String")
             def greet(name):
                 return f"Hello, {name}!"
 
             # Inferred from annotation:
             @func()
-            def multiply(a, b) -> int:
+            def multiply(a: int, b: int) -> int:
                 return a * b
 
     To remove a registered function, use ``chdb.drop_function(name)``.
     """
 
     def decorator(fn):
-        chdb.create_function(fn.__name__, fn, return_type)
+        chdb.create_function(fn.__name__, fn, arg_types, return_type)
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):

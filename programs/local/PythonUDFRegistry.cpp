@@ -29,7 +29,8 @@ PythonUDFRegistry & PythonUDFRegistry::instance()
 void PythonUDFRegistry::registerUDF(
     const String & name,
     py::function func,
-    DB::DataTypePtr return_type)
+    DB::DataTypePtr return_type,
+    const py::list & arg_types_hint)
 {
     py::gil_assert();
 
@@ -39,7 +40,7 @@ void PythonUDFRegistry::registerUDF(
         throw DB::Exception(DB::ErrorCodes::FUNCTION_ALREADY_EXISTS, "Python UDF '{}' is already registered", name);
 
     auto udf = std::make_shared<PythonScalarUDF>(name, std::move(func), std::move(return_type));
-    udf->initSignature();
+    udf->initSignature(arg_types_hint);
     udfs[name] = std::move(udf);
 }
 
@@ -82,10 +83,11 @@ void PythonUDFRegistry::clear()
 void registerPythonUDF(
     const String & name,
     py::function func,
-    DB::DataTypePtr return_type)
+    DB::DataTypePtr return_type,
+    const py::list & arg_types_hint)
 {
     PythonUDFRegistry::instance().registerUDF(
-        name, std::move(func), std::move(return_type));
+        name, std::move(func), std::move(return_type), arg_types_hint);
 }
 
 bool removePythonUDF(const String & name)

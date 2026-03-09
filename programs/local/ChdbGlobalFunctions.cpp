@@ -23,6 +23,7 @@ std::shared_ptr<ChdbPyType> toChdbPyType(const py::object & obj)
 void createFunction(
     const std::string & name,
     const py::function & func,
+    const py::object & arg_types,
     const py::object & return_type)
 {
     try
@@ -30,7 +31,16 @@ void createFunction(
         DB::DataTypePtr data_type = nullptr;
         if (!return_type.is_none())
             data_type = toChdbPyType(return_type)->dataType();
-        registerPythonUDF(name, func, std::move(data_type));
+
+        py::list arg_types_list;
+        if (!arg_types.is_none())
+        {
+            if (!py::isinstance<py::list>(arg_types))
+                throw std::runtime_error("arg_types must be a list, got " + std::string(py::str(arg_types.get_type())));
+            arg_types_list = arg_types.cast<py::list>();
+        }
+
+        registerPythonUDF(name, func, std::move(data_type), arg_types_list);
     }
     catch (const DB::Exception & e)
     {
@@ -60,19 +70,23 @@ void registerGlobalFunctions(py::module_ & m)
         &createFunction,
         py::arg("name"),
         py::arg("func"),
+        py::arg("arg_types") = py::none(),
         py::arg("return_type") = py::none(),
         "Register a Python scalar UDF globally.\n\n"
         "Args:\n"
         "    name (str): Function name to use in SQL queries.\n"
         "    func (callable): Python function to call for each row.\n"
+        "    arg_types: List of argument types (ChdbType, str, or Python type).\n"
+        "              Optional; if omitted, inferred from parameter annotations.\n"
+        "              If provided, must specify types for ALL parameters.\n"
         "    return_type: Return type (ChdbType or str). Optional; if omitted,\n"
         "                 inferred from the function's return type annotation.\n"
         "Example:\n"
         "    import chdb\n"
         "    from chdb.sqltypes import INT64\n"
-        "    chdb.create_function('add_int', lambda a, b: a + b, INT64)\n"
+        "    chdb.create_function('add_int', lambda a, b: a + b, [INT64, INT64], INT64)\n"
         "    # Or with annotation:\n"
-        "    def add_int(a, b) -> int: return a + b\n"
+        "    def add_int(a: int, b: int) -> int: return a + b\n"
         "    chdb.create_function('add_int', add_int)");
 
     m.def(

@@ -11,6 +11,7 @@
 #include <DataTypes/DataTypeDateTime.h>
 #include <DataTypes/DataTypeDateTime64.h>
 #include <DataTypes/DataTypeFactory.h>
+#include <base/defines.h>
 #include <Common/Exception.h>
 
 
@@ -185,29 +186,39 @@ DB::DataTypePtr annotationToDataType(const py::object & annotation)
     }
 }
 
-DB::DataTypePtr inferReturnType(const String & name, const py::object & signature)
+DB::DataTypePtr inferReturnType(const py::object & signature, const py::object & empty)
 {
     auto return_annotation = signature.attr("return_annotation");
-    auto empty = py::module_::import("inspect").attr("Signature").attr("empty");
 
     if (!py::none().is(return_annotation) && !empty.is(return_annotation))
     {
         auto data_type = annotationToDataType(return_annotation);
-        if (data_type)
-            return DB::makeNullable(data_type);
 
-        throw DB::Exception(
-            DB::ErrorCodes::BAD_ARGUMENTS,
-            "Python UDF '{}': return_type not specified and no valid return type annotation found. "
-            "Use -> ChdbType annotation or pass return_type explicitly.",
-            name);
+        chassert(data_type);
+        return DB::makeNullable(data_type);
     }
 
-    throw DB::Exception(
-        DB::ErrorCodes::BAD_ARGUMENTS,
-        "Python UDF '{}': return_type not specified and no return type annotation found. "
-            "Use -> ChdbType annotation or pass return_type explicitly.",
-        name);
+    return nullptr;
+}
+
+void resolveArgTypes(
+    const String & name,
+    const py::list & arg_types_hint,
+    const size_t arg_types_hint_count,
+    const size_t num_args,
+    DB::DataTypes & arg_types)
+{
+    chassert(arg_types_hint_count > 0);
+    chassert(arg_types.empty());
+
+    if (arg_types_hint_count != num_args)
+        throw DB::Exception(
+            DB::ErrorCodes::BAD_ARGUMENTS,
+            "Python UDF '{}': arg_types has {} elements but function has {} parameters",
+            name, py::len(arg_types_hint), num_args);
+
+    for (auto item : arg_types_hint)
+        arg_types.push_back(annotationToDataType(py::reinterpret_borrow<py::object>(item)));
 }
 
 } // anonymous namespace
@@ -224,20 +235,40 @@ PythonScalarUDF::PythonScalarUDF(
     , is_variadic(true)
 {}
 
-void PythonScalarUDF::initSignature()
+void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
 {
     try
     {
         auto signature = getSignature(func);
         auto params = py::dict(signature.attr("parameters"));
+        auto empty = py::module_::import("inspect").attr("Parameter").attr("empty");
 
         size_t positional_count = 0;
         bool found_varargs = false;
+        size_t arg_count = static_cast<size_t>(py::len(params));
+        arg_types.reserve(arg_count);
+        const size_t arg_types_hint_count = py::len(arg_types_hint);
+        bool no_arg_types_hint = arg_types_hint_count == 0;
 
         for (const auto & item : params)
         {
             auto param_name = py::str(item.first);
-            auto kind = ParameterKind::fromString(py::str(item.second.attr("kind")));
+            if (found_varargs)
+                throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS,
+                    "Python UDF '{}': parameter '{}' after *args is not supported", name, String(param_name));
+
+            const auto & value = item.second;
+
+            if (no_arg_types_hint)
+            {
+                auto arg_annotation = value.attr("annotation");
+                if (py::none().is(arg_annotation) || empty.is(arg_annotation))
+                    arg_types.emplace_back();
+                else
+                    arg_types.push_back(annotationToDataType(arg_annotation));
+            }
+
+            auto kind = ParameterKind::fromString(String(py::str(value.attr("kind"))));
             if (kind == ParameterKind::Type::VAR_POSITIONAL)
                 found_varargs = true;
             else if (kind == ParameterKind::Type::POSITIONAL_ONLY
@@ -247,7 +278,7 @@ void PythonScalarUDF::initSignature()
                 throw DB::Exception(
                     DB::ErrorCodes::BAD_ARGUMENTS,
                     "Python UDF '{}': parameter '{}' is {}, only positional parameters are supported",
-                    name, std::string(param_name), std::string(py::str(item.second.attr("kind"))));
+                    name, String(param_name), String(py::str(value.attr("kind"))));
         }
 
         if (found_varargs)
@@ -262,7 +293,15 @@ void PythonScalarUDF::initSignature()
         }
 
         if (!return_type)
-            return_type = inferReturnType(name, signature);
+            return_type = inferReturnType(signature, empty);
+
+        if (!return_type)
+            throw DB::Exception(
+                DB::ErrorCodes::BAD_ARGUMENTS,
+                "Python UDF '{}': return type not specified", name);
+
+        if (!no_arg_types_hint)
+            resolveArgTypes(name, arg_types_hint, arg_types_hint_count, arg_count, arg_types);
     }
     catch (py::error_already_set & e)
     {
@@ -271,6 +310,31 @@ void PythonScalarUDF::initSignature()
             "Python UDF '{}': failed to inspect function signature: {}",
             name, e.what());
     }
+}
+
+DB::DataTypePtr PythonScalarUDF::getReturnTypeImpl(const DB::DataTypes & arguments) const
+{
+    if (arguments.size() != arg_types.size())
+        throw DB::Exception(
+            DB::ErrorCodes::BAD_ARGUMENTS,
+            "Python UDF '{}': expected {} arguments, got {}",
+            name, arg_types.size(), arguments.size());
+
+    for (size_t i = 0; i < arguments.size(); ++i)
+    {
+        auto arg_type = arg_types[i];
+        if (!arg_type)
+            continue;
+
+        auto supertype = DB::tryGetLeastSupertype(DB::DataTypes{arguments[i], arg_type});
+        if (!supertype || !supertype->equals(*arg_type))
+            throw DB::Exception(
+                DB::ErrorCodes::BAD_ARGUMENTS,
+                "Python UDF '{}': argument {} type mismatch: expected {}, got {}",
+                name, i + 1, arg_types[i]->getName(), arguments[i]->getName());
+    }
+
+    return return_type;
 }
 
 PythonScalarUDF::~PythonScalarUDF()
@@ -308,7 +372,7 @@ void handleInteger(
     const DB::DataTypePtr & actual_type,
     const py::handle & value)
 {
-    auto ptr = value.ptr();
+    auto * ptr = value.ptr();
     int overflow;
     int64_t int_val = PyLong_AsLongLongAndOverflow(ptr, &overflow);
 

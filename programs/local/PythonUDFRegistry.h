@@ -21,7 +21,8 @@ public:
     void registerUDF(
         const String & name,
         py::function func,
-        DB::DataTypePtr return_type);
+        DB::DataTypePtr return_type,
+        const py::list & arg_types_hint = py::list());
 
     DB::FunctionOverloadResolverPtr tryGetFunction(const String & name) const override;
 
@@ -40,7 +41,8 @@ private:
 void registerPythonUDF(
     const String & name,
     py::function func,
-    DB::DataTypePtr return_type);
+    DB::DataTypePtr return_type,
+    const py::list & arg_types_hint = py::list());
 
 bool removePythonUDF(const String & name);
 

@@ -19,7 +19,7 @@ public:
 
     ~PythonScalarUDF() override;
 
-    void initSignature();
+    void initSignature(const py::list & arg_types_hint);
 
     String getName() const override { return name; }
     bool isVariadic() const override { return is_variadic; }
@@ -27,7 +27,7 @@ public:
     bool isSuitableForShortCircuitArgumentsExecution(const DB::DataTypesWithConstInfo &) const override { return false; }
     bool isDeterministic() const override { return false; }
 
-    DB::DataTypePtr getReturnTypeImpl(const DB::DataTypes &) const override { return return_type; }
+    DB::DataTypePtr getReturnTypeImpl(const DB::DataTypes & arguments) const override;
 
     DB::ColumnPtr executeImpl(
         const DB::ColumnsWithTypeAndName & arguments,
@@ -38,6 +38,7 @@ private:
     String name;
     py::function func;
     DB::DataTypePtr return_type;
+    DB::DataTypes arg_types;
     size_t num_args;
     bool is_variadic;
 };
