@@ -2423,7 +2423,6 @@ class TestUInt256UDF(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 
-@unittest.skip("TODO")
 class TestFloat32UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2431,35 +2430,243 @@ class TestFloat32UDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
-        chdb.create_function("f32_half", lambda x: x / 2, arg_types=[FLOAT32], return_type=FLOAT32)
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_float32_return_explicit_arg_types(self):
+        def half_f32(x):
+            return x / 2
+
+        chdb.create_function("f32_half", half_f32, arg_types=[FLOAT32], return_type=FLOAT32)
         ret = self.session.query("SELECT f32_half(toFloat32(7.0))", "CSV")
         self.assertEqual(str(ret).strip(), "3.5")
+        ret = self.session.query("SELECT f32_half(toFloat32(-4.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "-2")
         chdb.drop_function("f32_half")
 
-    def test_string_type_name(self):
-        chdb.create_function("f32_double", lambda x: x * 2, arg_types=["Float32"], return_type="Float32")
+    def test_create_function_float32_lambda_explicit(self):
+        chdb.create_function("f32_double", lambda x: x * 2, arg_types=[FLOAT32], return_type=FLOAT32)
         ret = self.session.query("SELECT f32_double(toFloat32(1.5))", "CSV")
         self.assertEqual(str(ret).strip(), "3")
+        ret = self.session.query("SELECT f32_double(toFloat32(-2.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "-5")
         chdb.drop_function("f32_double")
 
-    def test_func_decorator(self):
-        @func(arg_types=[FLOAT32, FLOAT32], return_type=FLOAT32)
-        def f32_avg(a, b):
-            return (a + b) / 2
+    # ── create_function: return_type only, no arg_types ──
 
-        ret = self.session.query("SELECT f32_avg(toFloat32(3.0), toFloat32(5.0))", "CSV")
-        self.assertEqual(str(ret).strip(), "4")
-        chdb.drop_function("f32_avg")
+    def test_create_function_float32_return_no_arg_types(self):
+        def const_pi(x):
+            return 3.14
 
-    def test_arg_type_mismatch(self):
+        chdb.create_function("f32_pi", const_pi, return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_pi(toFloat32(0.0))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.14, places=2)
+        chdb.drop_function("f32_pi")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def inc_f32(x: float) -> float:
+            return x + 1.0
+
+        chdb.create_function("f32_inc_override", inc_f32, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_inc_override(toFloat32(2.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "3.5")
+        chdb.drop_function("f32_inc_override")
+
+    # ── create_function: string type names ──
+
+    def test_create_function_float32_string_types(self):
+        chdb.create_function("f32_inc_str", lambda x: x + 1, arg_types=["Float32"], return_type="Float32")
+        ret = self.session.query("SELECT f32_inc_str(toFloat32(9.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "10.5")
+        chdb.drop_function("f32_inc_str")
+
+    # ── create_function: float32 as arg_type ──
+
+    def test_create_function_float32_as_arg_type(self):
+        def neg_f32(x):
+            return -x
+
+        chdb.create_function("f32_neg", neg_f32, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_neg(toFloat32(3.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "-3.5")
+        ret = self.session.query("SELECT f32_neg(toFloat32(-1.25))", "CSV")
+        self.assertEqual(str(ret).strip(), "1.25")
+        chdb.drop_function("f32_neg")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a + b
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("f32_dummy", dummy, arg_types=[FLOAT32], return_type=FLOAT32)
+
+    # ── create_function: arg type validation at query time ──
+
+    def test_create_function_arg_type_mismatch_at_query(self):
         chdb.create_function("f32_check", lambda x: x, arg_types=[FLOAT32], return_type=FLOAT32)
         with self.assertRaises(Exception):
             self.session.query("SELECT f32_check('hello')", "CSV")
         chdb.drop_function("f32_check")
 
+    # ── create_function: compatible arg type (integer → Float32) ──
 
-@unittest.skip("TODO")
+    def test_create_function_compatible_arg_type_int_to_float32(self):
+        chdb.create_function("f32_compat", lambda x: x + 0.5, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_compat(toInt8(3))", "CSV")
+        self.assertEqual(str(ret).strip(), "3.5")
+        chdb.drop_function("f32_compat")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_float32_explicit_all(self):
+        @func(arg_types=[FLOAT32, FLOAT32], return_type=FLOAT32)
+        def dec_f32_add(x, y):
+            return x + y
+
+        ret = self.session.query("SELECT dec_f32_add(toFloat32(1.5), toFloat32(2.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "4")
+        chdb.drop_function("dec_f32_add")
+
+    def test_func_decorator_float32_return_only(self):
+        @func(return_type=FLOAT32)
+        def dec_f32_one(x):
+            return 1.0
+
+        ret = self.session.query("SELECT dec_f32_one(toFloat32(999.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "1")
+        chdb.drop_function("dec_f32_one")
+
+    # ── special float values ──
+
+    def test_float32_zero_and_negative_zero(self):
+        chdb.create_function("f32_id", lambda x: x, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_id(toFloat32(0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        ret = self.session.query("SELECT f32_id(toFloat32(-0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        chdb.drop_function("f32_id")
+
+    def test_float32_very_small_value(self):
+        chdb.create_function("f32_tiny", lambda x: x * 2, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_tiny(toFloat32(0.001))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 0.002, places=3)
+        chdb.drop_function("f32_tiny")
+
+    def test_float32_return_int_as_float(self):
+        chdb.create_function("f32_ret_int", lambda x: 42, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_ret_int(toFloat32(0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 42.0)
+        chdb.drop_function("f32_ret_int")
+
+    def test_float32_return_computed_int_as_float(self):
+        chdb.create_function("f32_ret_comp_int", lambda x: int(x) * 3, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_ret_comp_int(toFloat32(4.7))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 12.0)
+        chdb.drop_function("f32_ret_comp_int")
+
+    def test_float32_return_negative_int_as_float(self):
+        chdb.create_function("f32_ret_neg_int", lambda x: -5, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_ret_neg_int(toFloat32(1.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), -5.0)
+        chdb.drop_function("f32_ret_neg_int")
+
+    def test_float32_return_zero_int_as_float(self):
+        chdb.create_function("f32_ret_zero_int", lambda x: 0, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_ret_zero_int(toFloat32(9.9))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        chdb.drop_function("f32_ret_zero_int")
+
+    def test_float32_return_bool_as_float_rejected(self):
+        chdb.create_function("f32_ret_bool_t", lambda x: True, arg_types=[FLOAT32], return_type=FLOAT32)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f32_ret_bool_t(toFloat32(0.0))", "CSV")
+        chdb.drop_function("f32_ret_bool_t")
+
+    # ── compatible arg type: various int types → Float32 ──
+    # Int8/Int16/UInt8/UInt16 auto-convert to Float32 (no precision loss)
+
+    def test_float32_compatible_arg_int16_to_float32(self):
+        chdb.create_function("f32_from_i16", lambda x: x + 0.5, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_from_i16(toInt16(10))", "CSV")
+        self.assertEqual(str(ret).strip(), "10.5")
+        chdb.drop_function("f32_from_i16")
+
+    def test_float32_compatible_arg_uint16_to_float32(self):
+        chdb.create_function("f32_from_u16", lambda x: x + 0.1, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_from_u16(toUInt16(20))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 20.1, places=1)
+        chdb.drop_function("f32_from_u16")
+
+    # Int32/Int64/UInt32 do NOT auto-convert to Float32 (possible precision loss)
+
+    def test_float32_incompatible_arg_int32_rejected(self):
+        chdb.create_function("f32_from_i32", lambda x: x + 0.25, arg_types=[FLOAT32], return_type=FLOAT32)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f32_from_i32(toInt32(100))", "CSV")
+        chdb.drop_function("f32_from_i32")
+
+    def test_float32_incompatible_arg_int64_rejected(self):
+        chdb.create_function("f32_from_i64", lambda x: x * 2.0, arg_types=[FLOAT32], return_type=FLOAT32)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f32_from_i64(toInt64(7))", "CSV")
+        chdb.drop_function("f32_from_i64")
+
+    def test_float32_incompatible_arg_uint32_rejected(self):
+        chdb.create_function("f32_from_u32", lambda x: x / 2.0, arg_types=[FLOAT32], return_type=FLOAT32)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f32_from_u32(toUInt32(50))", "CSV")
+        chdb.drop_function("f32_from_u32")
+
+    # explicit cast workaround: toFloat32(intValue) works
+
+    def test_float32_explicit_cast_int32_to_float32(self):
+        chdb.create_function("f32_cast_i32", lambda x: x + 0.25, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_cast_i32(toFloat32(toInt32(100)))", "CSV")
+        self.assertEqual(str(ret).strip(), "100.25")
+        chdb.drop_function("f32_cast_i32")
+
+    def test_float32_explicit_cast_int64_to_float32(self):
+        chdb.create_function("f32_cast_i64", lambda x: x * 2.0, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_cast_i64(toFloat32(toInt64(7)))", "CSV")
+        self.assertEqual(str(ret).strip(), "14")
+        chdb.drop_function("f32_cast_i64")
+
+    def test_float32_compatible_arg_negative_int8_to_float32(self):
+        chdb.create_function("f32_neg_int_arg", lambda x: x + 1.5, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_neg_int_arg(toInt8(-10))", "CSV")
+        self.assertEqual(str(ret).strip(), "-8.5")
+        chdb.drop_function("f32_neg_int_arg")
+
+    def test_float32_mixed_int_and_float_args_with_cast(self):
+        chdb.create_function("f32_mix", lambda a, b: a + b, arg_types=[FLOAT32, FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_mix(toFloat32(3), toFloat32(0.14))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.14, places=2)
+        chdb.drop_function("f32_mix")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_float32_udf(self):
+        chdb.create_function("f32_to_drop", lambda x: x + 1, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_to_drop(toFloat32(1.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "2")
+        chdb.drop_function("f32_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f32_to_drop(toFloat32(1.0))", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=FLOAT32)
+        def f32_py_callable(x):
+            return x + 1.0
+
+        self.assertEqual(f32_py_callable(2.5), 3.5)
+        chdb.drop_function("f32_py_callable")
+
+
 class TestFloat64UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2467,43 +2674,41 @@ class TestFloat64UDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
-        chdb.create_function("f64_half", lambda x: x / 2, arg_types=[FLOAT64], return_type=FLOAT64)
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_float64_return_explicit_arg_types(self):
+        def half_f64(x):
+            return x / 2
+
+        chdb.create_function("f64_half", half_f64, arg_types=[FLOAT64], return_type=FLOAT64)
         ret = self.session.query("SELECT f64_half(toFloat64(7.0))", "CSV")
         self.assertEqual(str(ret).strip(), "3.5")
+        ret = self.session.query("SELECT f64_half(toFloat64(-6.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "-3")
         chdb.drop_function("f64_half")
 
-    def test_string_type_name(self):
-        chdb.create_function("f64_double", lambda x: x * 2, arg_types=["Float64"], return_type="Float64")
+    def test_create_function_float64_lambda_explicit(self):
+        chdb.create_function("f64_double", lambda x: x * 2, arg_types=[FLOAT64], return_type=FLOAT64)
         ret = self.session.query("SELECT f64_double(toFloat64(1.25))", "CSV")
         self.assertEqual(str(ret).strip(), "2.5")
+        ret = self.session.query("SELECT f64_double(toFloat64(-3.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "-7")
         chdb.drop_function("f64_double")
 
-    def test_func_decorator(self):
-        @func(arg_types=[FLOAT64, FLOAT64], return_type=FLOAT64)
-        def f64_avg(a, b):
-            return (a + b) / 2
+    # ── create_function: return_type only, no arg_types ──
 
-        ret = self.session.query("SELECT f64_avg(toFloat64(3.0), toFloat64(5.0))", "CSV")
-        self.assertEqual(str(ret).strip(), "4")
-        chdb.drop_function("f64_avg")
+    def test_create_function_float64_return_no_arg_types(self):
+        def const_e(x):
+            return 2.718281828
 
-    def test_compatible_arg_type_float32_to_float64(self):
-        chdb.create_function("f64_compat", lambda x: x, arg_types=[FLOAT64], return_type=FLOAT64)
-        ret = self.session.query("SELECT f64_compat(toFloat32(2.5))", "CSV")
-        self.assertEqual(str(ret).strip(), "2.5")
-        chdb.drop_function("f64_compat")
+        chdb.create_function("f64_e", const_e, return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_e(toFloat64(0.0))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 2.718281828, places=6)
+        chdb.drop_function("f64_e")
 
-    def test_infer_all_from_annotations(self):
-        def f64_annotated(a: float, b: float) -> float:
-            return a * b
+    # ── create_function: infer return_type from annotation ──
 
-        chdb.create_function("f64_annotated", f64_annotated)
-        ret = self.session.query("SELECT f64_annotated(toFloat64(2.5), toFloat64(4.0))", "CSV")
-        self.assertEqual(str(ret).strip(), "10")
-        chdb.drop_function("f64_annotated")
-
-    def test_infer_return_from_annotation(self):
+    def test_create_function_float64_infer_return_from_annotation(self):
         def f64_ret_only(x) -> float:
             return x * 0.5
 
@@ -2512,13 +2717,273 @@ class TestFloat64UDF(unittest.TestCase):
         self.assertEqual(str(ret).strip(), "2.5")
         chdb.drop_function("f64_ret_only")
 
+    # ── create_function: infer both arg_types and return_type from annotations ──
+
+    def test_create_function_float64_infer_all_from_annotations(self):
+        def f64_mul(a: float, b: float) -> float:
+            return a * b
+
+        chdb.create_function("f64_mul_ann", f64_mul)
+        ret = self.session.query("SELECT f64_mul_ann(toFloat64(2.5), toFloat64(4.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "10")
+        chdb.drop_function("f64_mul_ann")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def inc_f64(x: float) -> float:
+            return x + 1.0
+
+        chdb.create_function("f64_inc_override", inc_f64, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_inc_override(toFloat64(2.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "3.5")
+        chdb.drop_function("f64_inc_override")
+
+    # ── create_function: string type names ──
+
+    def test_create_function_float64_string_types(self):
+        chdb.create_function("f64_inc_str", lambda x: x + 1, arg_types=["Float64"], return_type="Float64")
+        ret = self.session.query("SELECT f64_inc_str(toFloat64(9.25))", "CSV")
+        self.assertEqual(str(ret).strip(), "10.25")
+        chdb.drop_function("f64_inc_str")
+
+    # ── create_function: float64 as arg_type ──
+
+    def test_create_function_float64_as_arg_type(self):
+        def neg_f64(x):
+            return -x
+
+        chdb.create_function("f64_neg", neg_f64, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_neg(toFloat64(3.14))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), -3.14, places=10)
+        ret = self.session.query("SELECT f64_neg(toFloat64(-1.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "1.5")
+        chdb.drop_function("f64_neg")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a + b
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("f64_dummy", dummy, arg_types=[FLOAT64], return_type=FLOAT64)
+
+    # ── create_function: arg type validation at query time ──
+
+    def test_create_function_arg_type_mismatch_at_query(self):
+        chdb.create_function("f64_check", lambda x: x, arg_types=[FLOAT64], return_type=FLOAT64)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f64_check('hello')", "CSV")
+        chdb.drop_function("f64_check")
+
+    # ── create_function: compatible arg type (Float32 → Float64, Int → Float64) ──
+
+    def test_create_function_compatible_arg_type_float32_to_float64(self):
+        chdb.create_function("f64_compat_f32", lambda x: x, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_compat_f32(toFloat32(2.5))", "CSV")
+        self.assertEqual(str(ret).strip(), "2.5")
+        chdb.drop_function("f64_compat_f32")
+
+    def test_create_function_compatible_arg_type_int_to_float64(self):
+        chdb.create_function("f64_compat_int", lambda x: x + 0.1, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_compat_int(toInt32(3))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.1, places=10)
+        chdb.drop_function("f64_compat_int")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_float64_explicit_all(self):
+        @func(arg_types=[FLOAT64, FLOAT64], return_type=FLOAT64)
+        def dec_f64_avg(a, b):
+            return (a + b) / 2
+
+        ret = self.session.query("SELECT dec_f64_avg(toFloat64(3.0), toFloat64(5.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "4")
+        chdb.drop_function("dec_f64_avg")
+
+    def test_func_decorator_float64_return_only(self):
+        @func(return_type=FLOAT64)
+        def dec_f64_one(x):
+            return 1.0
+
+        ret = self.session.query("SELECT dec_f64_one(toFloat64(999.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "1")
+        chdb.drop_function("dec_f64_one")
+
+    # ── @func decorator: infer all from annotations ──
+
+    def test_func_decorator_float64_infer_all(self):
+        @func()
+        def dec_f64_sum(a: float, b: float) -> float:
+            return a + b
+
+        ret = self.session.query("SELECT dec_f64_sum(toFloat64(1.1), toFloat64(2.2))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.3, places=10)
+        chdb.drop_function("dec_f64_sum")
+
+    # ── @func decorator: infer return_type only ──
+
+    def test_func_decorator_float64_infer_return(self):
+        @func(arg_types=[FLOAT64, FLOAT64])
+        def dec_f64_diff(a, b) -> float:
+            return a - b
+
+        ret = self.session.query("SELECT dec_f64_diff(toFloat64(5.5), toFloat64(2.2))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.3, places=10)
+        chdb.drop_function("dec_f64_diff")
+
+    # ── special float values ──
+
+    def test_float64_zero_and_negative_zero(self):
+        chdb.create_function("f64_id", lambda x: x, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_id(toFloat64(0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        ret = self.session.query("SELECT f64_id(toFloat64(-0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        chdb.drop_function("f64_id")
+
+    def test_float64_very_small_value(self):
+        chdb.create_function("f64_tiny", lambda x: x * 2, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_tiny(toFloat64(0.0000001))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 0.0000002, places=10)
+        chdb.drop_function("f64_tiny")
+
+    def test_float64_large_value(self):
+        chdb.create_function("f64_large", lambda x: x + 1, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_large(toFloat64(1e15))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 1e15 + 1, places=0)
+        chdb.drop_function("f64_large")
+
+    def test_float64_return_int_as_float(self):
+        chdb.create_function("f64_ret_int", lambda x: 42, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_ret_int(toFloat64(0.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 42.0)
+        chdb.drop_function("f64_ret_int")
+
+    def test_float64_return_computed_int_as_float(self):
+        chdb.create_function("f64_ret_comp_int", lambda x: int(x) * 5, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_ret_comp_int(toFloat64(3.9))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 15.0)
+        chdb.drop_function("f64_ret_comp_int")
+
+    def test_float64_return_negative_int_as_float(self):
+        chdb.create_function("f64_ret_neg_int", lambda x: -99, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_ret_neg_int(toFloat64(1.0))", "CSV")
+        self.assertEqual(float(str(ret).strip()), -99.0)
+        chdb.drop_function("f64_ret_neg_int")
+
+    def test_float64_return_zero_int_as_float(self):
+        chdb.create_function("f64_ret_zero_int", lambda x: 0, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_ret_zero_int(toFloat64(5.5))", "CSV")
+        self.assertEqual(float(str(ret).strip()), 0.0)
+        chdb.drop_function("f64_ret_zero_int")
+
+    def test_float64_return_bool_as_float_rejected(self):
+        chdb.create_function("f64_ret_bool_t", lambda x: True, arg_types=[FLOAT64], return_type=FLOAT64)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f64_ret_bool_t(toFloat64(0.0))", "CSV")
+        chdb.drop_function("f64_ret_bool_t")
+
+    # ── compatible arg type: various int types → Float64 ──
+    # Int8/Int16/Int32/UInt8/UInt16/UInt32 auto-convert to Float64 (no precision loss)
+
+    def test_float64_compatible_arg_int8_to_float64(self):
+        chdb.create_function("f64_from_i8", lambda x: x + 0.5, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_from_i8(toInt8(5))", "CSV")
+        self.assertEqual(str(ret).strip(), "5.5")
+        chdb.drop_function("f64_from_i8")
+
+    def test_float64_compatible_arg_int16_to_float64(self):
+        chdb.create_function("f64_from_i16", lambda x: x + 0.25, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_from_i16(toInt16(200))", "CSV")
+        self.assertEqual(str(ret).strip(), "200.25")
+        chdb.drop_function("f64_from_i16")
+
+    def test_float64_compatible_arg_int32_to_float64(self):
+        chdb.create_function("f64_from_i32", lambda x: x + 0.125, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_from_i32(toInt32(1000))", "CSV")
+        self.assertEqual(str(ret).strip(), "1000.125")
+        chdb.drop_function("f64_from_i32")
+
+    def test_float64_compatible_arg_uint8_to_float64(self):
+        chdb.create_function("f64_from_u8", lambda x: x + 0.1, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_from_u8(toUInt8(50))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 50.1, places=10)
+        chdb.drop_function("f64_from_u8")
+
+    def test_float64_compatible_arg_uint32_to_float64(self):
+        chdb.create_function("f64_from_u32", lambda x: x / 4.0, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_from_u32(toUInt32(100))", "CSV")
+        self.assertEqual(str(ret).strip(), "25")
+        chdb.drop_function("f64_from_u32")
+
+    def test_float64_compatible_arg_negative_int32_to_float64(self):
+        chdb.create_function("f64_neg_int_arg", lambda x: x + 0.5, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_neg_int_arg(toInt32(-42))", "CSV")
+        self.assertEqual(str(ret).strip(), "-41.5")
+        chdb.drop_function("f64_neg_int_arg")
+
+    # Int64/UInt64 do NOT auto-convert to Float64 (possible precision loss)
+
+    def test_float64_incompatible_arg_int64_rejected(self):
+        chdb.create_function("f64_from_i64", lambda x: x * 2.0, arg_types=[FLOAT64], return_type=FLOAT64)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f64_from_i64(toInt64(1000))", "CSV")
+        chdb.drop_function("f64_from_i64")
+
+    def test_float64_incompatible_arg_uint64_rejected(self):
+        chdb.create_function("f64_from_u64", lambda x: x / 3.0, arg_types=[FLOAT64], return_type=FLOAT64)
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f64_from_u64(toUInt64(90))", "CSV")
+        chdb.drop_function("f64_from_u64")
+
+    # explicit cast workaround: toFloat64(intValue) works
+
+    def test_float64_explicit_cast_int64_to_float64(self):
+        chdb.create_function("f64_cast_i64", lambda x: x * 2.0, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_cast_i64(toFloat64(toInt64(1000)))", "CSV")
+        self.assertEqual(str(ret).strip(), "2000")
+        chdb.drop_function("f64_cast_i64")
+
+    def test_float64_mixed_int_and_float_args_with_cast(self):
+        chdb.create_function("f64_mix", lambda a, b: a + b, arg_types=[FLOAT64, FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_mix(toFloat64(3), toFloat64(0.14159))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 3.14159, places=5)
+        chdb.drop_function("f64_mix")
+
+    def test_float64_precision(self):
+        chdb.create_function("f64_prec", lambda x: x, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_prec(toFloat64(1.23456789012345))", "CSV")
+        self.assertAlmostEqual(float(str(ret).strip()), 1.23456789012345, places=12)
+        chdb.drop_function("f64_prec")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_float64_udf(self):
+        chdb.create_function("f64_to_drop", lambda x: x + 1, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_to_drop(toFloat64(1.0))", "CSV")
+        self.assertEqual(str(ret).strip(), "2")
+        chdb.drop_function("f64_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT f64_to_drop(toFloat64(1.0))", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=FLOAT64)
+        def f64_py_callable(x):
+            return x + 1.0
+
+        self.assertEqual(f64_py_callable(2.5), 3.5)
+        chdb.drop_function("f64_py_callable")
+
 
 # ═══════════════════════════════════════════════════════════════════
 # String Type
 # ═══════════════════════════════════════════════════════════════════
 
 
-@unittest.skip("TODO")
 class TestStringUDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2526,37 +2991,41 @@ class TestStringUDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
-        chdb.create_function("str_upper", lambda s: s.upper(), arg_types=[STRING], return_type=STRING)
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_string_return_explicit_arg_types(self):
+        def upper_str(s):
+            return s.upper()
+
+        chdb.create_function("str_upper", upper_str, arg_types=[STRING], return_type=STRING)
         ret = self.session.query("SELECT str_upper('hello')", "CSV")
         self.assertEqual(str(ret).strip(), '"HELLO"')
+        ret = self.session.query("SELECT str_upper('World')", "CSV")
+        self.assertEqual(str(ret).strip(), '"WORLD"')
         chdb.drop_function("str_upper")
 
-    def test_string_type_name(self):
-        chdb.create_function("str_rev", lambda s: s[::-1], arg_types=["String"], return_type="String")
+    def test_create_function_string_lambda_explicit(self):
+        chdb.create_function("str_rev", lambda s: s[::-1], arg_types=[STRING], return_type=STRING)
         ret = self.session.query("SELECT str_rev('abcde')", "CSV")
         self.assertEqual(str(ret).strip(), '"edcba"')
+        ret = self.session.query("SELECT str_rev('12345')", "CSV")
+        self.assertEqual(str(ret).strip(), '"54321"')
         chdb.drop_function("str_rev")
 
-    def test_func_decorator(self):
-        @func(arg_types=[STRING, STRING], return_type=STRING)
-        def str_concat(a, b):
-            return a + b
+    # ── create_function: return_type only, no arg_types ──
 
-        ret = self.session.query("SELECT str_concat('hello', ' world')", "CSV")
-        self.assertEqual(str(ret).strip(), '"hello world"')
-        chdb.drop_function("str_concat")
+    def test_create_function_string_return_no_arg_types(self):
+        def to_greeting(x):
+            return "hello"
 
-    def test_infer_all_from_annotations(self):
-        def str_annotated(s: str) -> str:
-            return s.lower()
-
-        chdb.create_function("str_annotated", str_annotated)
-        ret = self.session.query("SELECT str_annotated('HELLO')", "CSV")
+        chdb.create_function("str_greet", to_greeting, return_type=STRING)
+        ret = self.session.query("SELECT str_greet(42)", "CSV")
         self.assertEqual(str(ret).strip(), '"hello"')
-        chdb.drop_function("str_annotated")
+        chdb.drop_function("str_greet")
 
-    def test_infer_return_from_annotation(self):
+    # ── create_function: infer return_type from annotation ──
+
+    def test_create_function_string_infer_return_from_annotation(self):
         def str_ret_only(s) -> str:
             return s + "!"
 
@@ -2565,11 +3034,170 @@ class TestStringUDF(unittest.TestCase):
         self.assertEqual(str(ret).strip(), '"hi!"')
         chdb.drop_function("str_ret_only")
 
-    def test_arg_type_mismatch(self):
-        chdb.create_function("str_mismatch", lambda s: s, arg_types=[STRING], return_type=STRING)
+    # ── create_function: infer both arg_types and return_type from annotations ──
+
+    def test_create_function_string_infer_all_from_annotations(self):
+        def str_lower(s: str) -> str:
+            return s.lower()
+
+        chdb.create_function("str_lower_ann", str_lower)
+        ret = self.session.query("SELECT str_lower_ann('HELLO')", "CSV")
+        self.assertEqual(str(ret).strip(), '"hello"')
+        chdb.drop_function("str_lower_ann")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def str_override(s: str) -> str:
+            return s + "_suffix"
+
+        chdb.create_function("str_override", str_override, arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_override('test')", "CSV")
+        self.assertEqual(str(ret).strip(), '"test_suffix"')
+        chdb.drop_function("str_override")
+
+    # ── create_function: string type names ──
+
+    def test_create_function_string_string_types(self):
+        chdb.create_function("str_len_s", lambda s: str(len(s)), arg_types=["String"], return_type="String")
+        ret = self.session.query("SELECT str_len_s('hello')", "CSV")
+        self.assertEqual(str(ret).strip(), '"5"')
+        chdb.drop_function("str_len_s")
+
+    # ── create_function: string as arg_type ──
+
+    def test_create_function_string_as_arg_type(self):
+        def repeat_str(s):
+            return s + s
+
+        chdb.create_function("str_repeat", repeat_str, arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_repeat('ab')", "CSV")
+        self.assertEqual(str(ret).strip(), '"abab"')
+        chdb.drop_function("str_repeat")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a + b
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("str_dummy", dummy, arg_types=[STRING], return_type=STRING)
+
+    # ── create_function: multiple string args ──
+
+    def test_create_function_multi_string_args(self):
+        def concat_three(a, b, c):
+            return a + b + c
+
+        chdb.create_function("str_cat3", concat_three, arg_types=[STRING, STRING, STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_cat3('a', 'b', 'c')", "CSV")
+        self.assertEqual(str(ret).strip(), '"abc"')
+        chdb.drop_function("str_cat3")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_string_explicit_all(self):
+        @func(arg_types=[STRING, STRING], return_type=STRING)
+        def dec_str_concat(a, b):
+            return a + b
+
+        ret = self.session.query("SELECT dec_str_concat('hello', ' world')", "CSV")
+        self.assertEqual(str(ret).strip(), '"hello world"')
+        chdb.drop_function("dec_str_concat")
+
+    def test_func_decorator_string_return_only(self):
+        @func(return_type=STRING)
+        def dec_str_const(x):
+            return "constant"
+
+        ret = self.session.query("SELECT dec_str_const('anything')", "CSV")
+        self.assertEqual(str(ret).strip(), '"constant"')
+        chdb.drop_function("dec_str_const")
+
+    # ── @func decorator: infer all from annotations ──
+
+    def test_func_decorator_string_infer_all(self):
+        @func()
+        def dec_str_strip(s: str) -> str:
+            return s.strip()
+
+        ret = self.session.query("SELECT dec_str_strip('  hello  ')", "CSV")
+        self.assertEqual(str(ret).strip(), '"hello"')
+        chdb.drop_function("dec_str_strip")
+
+    # ── @func decorator: infer return_type only ──
+
+    def test_func_decorator_string_infer_return(self):
+        @func(arg_types=[STRING])
+        def dec_str_title(s) -> str:
+            return s.title()
+
+        ret = self.session.query("SELECT dec_str_title('hello world')", "CSV")
+        self.assertEqual(str(ret).strip(), '"Hello World"')
+        chdb.drop_function("dec_str_title")
+
+    # ── special string cases ──
+
+    def test_string_empty(self):
+        chdb.create_function("str_is_empty", lambda s: str(len(s) == 0), arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_is_empty('')", "CSV")
+        self.assertEqual(str(ret).strip(), '"True"')
+        ret = self.session.query("SELECT str_is_empty('x')", "CSV")
+        self.assertEqual(str(ret).strip(), '"False"')
+        chdb.drop_function("str_is_empty")
+
+    def test_string_with_spaces(self):
+        chdb.create_function("str_trim", lambda s: s.strip(), arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_trim('  hello  ')", "CSV")
+        self.assertEqual(str(ret).strip(), '"hello"')
+        chdb.drop_function("str_trim")
+
+    def test_string_unicode(self):
+        chdb.create_function("str_uni_len", lambda s: str(len(s)), arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_uni_len('中文测试')", "CSV")
+        self.assertEqual(str(ret).strip(), '"4"')
+        chdb.drop_function("str_uni_len")
+
+    def test_string_with_special_chars(self):
+        chdb.create_function("str_has_at", lambda s: str('@' in s), arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_has_at('user@example.com')", "CSV")
+        self.assertEqual(str(ret).strip(), '"True"')
+        ret = self.session.query("SELECT str_has_at('no-at-sign')", "CSV")
+        self.assertEqual(str(ret).strip(), '"False"')
+        chdb.drop_function("str_has_at")
+
+    def test_string_return_none_becomes_null(self):
+        chdb.create_function("str_none", lambda s: None, arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_none('hello')", "CSV")
+        self.assertEqual(str(ret).strip(), "\\N")
+        chdb.drop_function("str_none")
+
+    def test_string_return_int_to_string(self):
+        chdb.create_function("str_from_int", lambda x: str(x), return_type=STRING)
+        ret = self.session.query("SELECT str_from_int(42)", "CSV")
+        self.assertEqual(str(ret).strip(), '"42"')
+        chdb.drop_function("str_from_int")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_string_udf(self):
+        chdb.create_function("str_to_drop", lambda s: s.upper(), arg_types=[STRING], return_type=STRING)
+        ret = self.session.query("SELECT str_to_drop('test')", "CSV")
+        self.assertEqual(str(ret).strip(), '"TEST"')
+        chdb.drop_function("str_to_drop")
         with self.assertRaises(Exception):
-            self.session.query("SELECT str_mismatch(123)", "CSV")
-        chdb.drop_function("str_mismatch")
+            self.session.query("SELECT str_to_drop('test')", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=STRING)
+        def str_py_callable(s):
+            return s.upper()
+
+        self.assertEqual(str_py_callable("hello"), "HELLO")
+        chdb.drop_function("str_py_callable")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2577,7 +3205,6 @@ class TestStringUDF(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 
-@unittest.skip("TODO")
 class TestDateUDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2585,53 +3212,225 @@ class TestDateUDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_date_return_explicit_arg_types(self):
         def add_day(d):
             return d + datetime.timedelta(days=1)
 
         chdb.create_function("date_add_day", add_day, arg_types=[DATE], return_type=DATE)
         ret = self.session.query("SELECT date_add_day(toDate('2024-01-15'))", "CSV")
         self.assertEqual(str(ret).strip(), '"2024-01-16"')
+        ret = self.session.query("SELECT date_add_day(toDate('2024-02-28'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-02-29"')
         chdb.drop_function("date_add_day")
 
-    def test_string_type_name(self):
-        def date_identity(d):
+    def test_create_function_date_lambda_explicit(self):
+        chdb.create_function("date_id", lambda d: d, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_id(toDate('2024-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-06-15"')
+        chdb.drop_function("date_id")
+
+    # ── create_function: return_type only, no arg_types ──
+
+    def test_create_function_date_return_no_arg_types(self):
+        def const_date(x):
+            return datetime.date(2024, 1, 1)
+
+        chdb.create_function("date_const", const_date, return_type=DATE)
+        ret = self.session.query("SELECT date_const(42)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01"')
+        chdb.drop_function("date_const")
+
+    # ── create_function: infer return_type from annotation ──
+
+    def test_create_function_date_infer_return_from_annotation(self):
+        def date_ret_only(d) -> datetime.date:
             return d
 
-        chdb.create_function("date_str_name", date_identity, arg_types=["Date"], return_type="Date")
-        ret = self.session.query("SELECT date_str_name(toDate('2024-06-15'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-06-15"')
-        chdb.drop_function("date_str_name")
+        chdb.create_function("date_ret_only", date_ret_only)
+        ret = self.session.query("SELECT date_ret_only(toDate('2024-03-20'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-03-20"')
+        chdb.drop_function("date_ret_only")
 
-    def test_func_decorator(self):
-        @func(arg_types=[DATE], return_type=DATE)
-        def date_add_week(d):
-            return d + datetime.timedelta(weeks=1)
+    # ── create_function: infer both arg_types and return_type from annotations ──
 
-        ret = self.session.query("SELECT date_add_week(toDate('2024-01-01'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-01-08"')
-        chdb.drop_function("date_add_week")
-
-    def test_infer_all_from_annotations(self):
+    def test_create_function_date_infer_all_from_annotations(self):
         def date_infer(d: datetime.date) -> datetime.date:
             return d + datetime.timedelta(days=10)
 
-        chdb.create_function("date_infer", date_infer)
-        ret = self.session.query("SELECT date_infer(toDate('2024-01-15'))", "CSV")
+        chdb.create_function("date_infer_all", date_infer)
+        ret = self.session.query("SELECT date_infer_all(toDate('2024-01-15'))", "CSV")
         self.assertEqual(str(ret).strip(), '"2024-01-25"')
-        chdb.drop_function("date_infer")
+        chdb.drop_function("date_infer_all")
 
-    def test_extract_component_as_int(self):
-        def date_year(d):
-            return d.year
+    # ── create_function: explicit arg_types override annotations ──
 
-        chdb.create_function("date_year", date_year, arg_types=[DATE], return_type=INT32)
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def date_override(d: datetime.date) -> datetime.date:
+            return d
+
+        chdb.create_function("date_override", date_override, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_override(toDate('2024-07-04'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-04"')
+        chdb.drop_function("date_override")
+
+    # ── create_function: string type names ──
+
+    def test_create_function_date_string_types(self):
+        chdb.create_function("date_str_id", lambda d: d, arg_types=["Date"], return_type="Date")
+        ret = self.session.query("SELECT date_str_id(toDate('2024-12-25'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-12-25"')
+        chdb.drop_function("date_str_id")
+
+    # ── create_function: date as arg_type ──
+
+    def test_create_function_date_as_arg_type(self):
+        def add_week(d):
+            return d + datetime.timedelta(weeks=1)
+
+        chdb.create_function("date_add_wk", add_week, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_add_wk(toDate('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-08"')
+        chdb.drop_function("date_add_wk")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("date_dummy", dummy, arg_types=[DATE], return_type=DATE)
+
+    # ── extract date components as integers ──
+
+    def test_extract_year(self):
+        chdb.create_function("date_year", lambda d: d.year, arg_types=[DATE], return_type=INT32)
         ret = self.session.query("SELECT date_year(toDate('2024-06-15'))", "CSV")
         self.assertEqual(str(ret).strip(), "2024")
         chdb.drop_function("date_year")
 
+    def test_extract_month(self):
+        chdb.create_function("date_month", lambda d: d.month, arg_types=[DATE], return_type=INT32)
+        ret = self.session.query("SELECT date_month(toDate('2024-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), "6")
+        chdb.drop_function("date_month")
 
-@unittest.skip("TODO")
+    def test_extract_day(self):
+        chdb.create_function("date_day", lambda d: d.day, arg_types=[DATE], return_type=INT32)
+        ret = self.session.query("SELECT date_day(toDate('2024-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), "15")
+        chdb.drop_function("date_day")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_date_explicit_all(self):
+        @func(arg_types=[DATE], return_type=DATE)
+        def dec_date_add_week(d):
+            return d + datetime.timedelta(weeks=1)
+
+        ret = self.session.query("SELECT dec_date_add_week(toDate('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-08"')
+        chdb.drop_function("dec_date_add_week")
+
+    def test_func_decorator_date_return_only(self):
+        @func(return_type=DATE)
+        def dec_date_epoch(x):
+            return datetime.date(1970, 1, 1)
+
+        ret = self.session.query("SELECT dec_date_epoch(42)", "CSV")
+        self.assertEqual(str(ret).strip(), '"1970-01-01"')
+        chdb.drop_function("dec_date_epoch")
+
+    # ── @func decorator: infer all from annotations ──
+
+    def test_func_decorator_date_infer_all(self):
+        @func()
+        def dec_date_id(d: datetime.date) -> datetime.date:
+            return d
+
+        ret = self.session.query("SELECT dec_date_id(toDate('2024-09-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-09-01"')
+        chdb.drop_function("dec_date_id")
+
+    # ── special date cases ──
+
+    def test_date_leap_year(self):
+        chdb.create_function("date_leap", lambda d: d + datetime.timedelta(days=1), arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_leap(toDate('2024-02-28'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-02-29"')
+        ret = self.session.query("SELECT date_leap(toDate('2023-02-28'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2023-03-01"')
+        chdb.drop_function("date_leap")
+
+    def test_date_year_boundary(self):
+        chdb.create_function("date_next", lambda d: d + datetime.timedelta(days=1), arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_next(toDate('2024-12-31'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2025-01-01"')
+        chdb.drop_function("date_next")
+
+    def test_date_weekday(self):
+        chdb.create_function("date_wd", lambda d: d.weekday(), arg_types=[DATE], return_type=INT32)
+        ret = self.session.query("SELECT date_wd(toDate('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), "0")
+        chdb.drop_function("date_wd")
+
+    def test_date_isoformat(self):
+        chdb.create_function("date_iso", lambda d: d.isoformat(), arg_types=[DATE], return_type=STRING)
+        ret = self.session.query("SELECT date_iso(toDate('2024-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-06-15"')
+        chdb.drop_function("date_iso")
+
+    # ── Date boundary: return value out of range (UInt16 days, 1970-01-01 ~ 2149-06-06) ──
+
+    def test_return_date_before_epoch_wraps(self):
+        chdb.create_function("date_pre_epoch", lambda d: datetime.date(1969, 12, 31),
+                             arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_pre_epoch(toDate('2024-01-01'))", "CSV")
+        self.assertIsNotNone(ret)
+        chdb.drop_function("date_pre_epoch")
+
+    def test_return_date_far_future_wraps(self):
+        chdb.create_function("date_far_future", lambda d: datetime.date(2200, 1, 1),
+                             arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_far_future(toDate('2024-01-01'))", "CSV")
+        self.assertIsNotNone(ret)
+        chdb.drop_function("date_far_future")
+
+    def test_date_max_boundary(self):
+        chdb.create_function("date_max", lambda d: d, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_max(toDate('2149-06-06'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2149-06-06"')
+        chdb.drop_function("date_max")
+
+    def test_date_min_boundary(self):
+        chdb.create_function("date_min", lambda d: d, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_min(toDate('1970-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"1970-01-01"')
+        chdb.drop_function("date_min")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_date_udf(self):
+        chdb.create_function("date_to_drop", lambda d: d, arg_types=[DATE], return_type=DATE)
+        ret = self.session.query("SELECT date_to_drop(toDate('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01"')
+        chdb.drop_function("date_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT date_to_drop(toDate('2024-01-01'))", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=DATE)
+        def date_py_callable(d):
+            return d
+
+        result = date_py_callable(datetime.date(2024, 1, 1))
+        self.assertEqual(result, datetime.date(2024, 1, 1))
+        chdb.drop_function("date_py_callable")
+
 class TestDate32UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2639,48 +3438,163 @@ class TestDate32UDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_date32_return_explicit_arg_types(self):
         def add_day32(d):
             return d + datetime.timedelta(days=1)
 
         chdb.create_function("d32_add_day", add_day32, arg_types=[DATE32], return_type=DATE32)
         ret = self.session.query("SELECT d32_add_day(toDate32('2024-01-15'))", "CSV")
         self.assertEqual(str(ret).strip(), '"2024-01-16"')
+        ret = self.session.query("SELECT d32_add_day(toDate32('2024-02-28'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-02-29"')
         chdb.drop_function("d32_add_day")
 
-    def test_string_type_name(self):
-        def d32_identity(d):
+    def test_create_function_date32_lambda_explicit(self):
+        chdb.create_function("d32_id", lambda d: d, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_id(toDate32('2024-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-06-15"')
+        chdb.drop_function("d32_id")
+
+    # ── create_function: return_type only, no arg_types ──
+
+    def test_create_function_date32_return_no_arg_types(self):
+        def const_d32(x):
+            return datetime.date(2024, 1, 1)
+
+        chdb.create_function("d32_const", const_d32, return_type=DATE32)
+        ret = self.session.query("SELECT d32_const(42)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01"')
+        chdb.drop_function("d32_const")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def d32_override(d: datetime.date) -> datetime.date:
             return d
 
-        chdb.create_function("d32_str_name", d32_identity, arg_types=["Date32"], return_type="Date32")
-        ret = self.session.query("SELECT d32_str_name(toDate32('2024-06-15'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-06-15"')
-        chdb.drop_function("d32_str_name")
+        chdb.create_function("d32_override", d32_override, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_override(toDate32('2024-07-04'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-04"')
+        chdb.drop_function("d32_override")
 
-    def test_func_decorator(self):
-        @func(arg_types=[DATE32], return_type=DATE32)
-        def d32_add_month(d):
-            month = d.month % 12 + 1
-            year = d.year + (1 if d.month == 12 else 0)
-            return d.replace(year=year, month=month)
+    # ── create_function: string type names ──
 
-        ret = self.session.query("SELECT d32_add_month(toDate32('2024-01-15'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-02-15"')
-        chdb.drop_function("d32_add_month")
+    def test_create_function_date32_string_types(self):
+        chdb.create_function("d32_str_id", lambda d: d, arg_types=["Date32"], return_type="Date32")
+        ret = self.session.query("SELECT d32_str_id(toDate32('2024-12-25'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-12-25"')
+        chdb.drop_function("d32_str_id")
 
-    def test_compatible_arg_type_date_to_date32(self):
+    # ── create_function: date32 as arg_type ──
+
+    def test_create_function_date32_as_arg_type(self):
+        def sub_day(d):
+            return d - datetime.timedelta(days=1)
+
+        chdb.create_function("d32_sub_day", sub_day, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_sub_day(toDate32('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2023-12-31"')
+        chdb.drop_function("d32_sub_day")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("d32_dummy", dummy, arg_types=[DATE32], return_type=DATE32)
+
+    # ── compatible arg type: Date → Date32 ──
+
+    def test_create_function_compatible_arg_type_date_to_date32(self):
         chdb.create_function("d32_compat", lambda d: d, arg_types=[DATE32], return_type=DATE32)
         ret = self.session.query("SELECT d32_compat(toDate('2024-03-01'))", "CSV")
         self.assertEqual(str(ret).strip(), '"2024-03-01"')
         chdb.drop_function("d32_compat")
+
+    # ── extract date components ──
+
+    def test_extract_year(self):
+        chdb.create_function("d32_year", lambda d: d.year, arg_types=[DATE32], return_type=INT32)
+        ret = self.session.query("SELECT d32_year(toDate32('1900-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), "1900")
+        chdb.drop_function("d32_year")
+
+    def test_extract_month_and_day(self):
+        chdb.create_function("d32_md", lambda d: d.month * 100 + d.day, arg_types=[DATE32], return_type=INT32)
+        ret = self.session.query("SELECT d32_md(toDate32('2024-11-23'))", "CSV")
+        self.assertEqual(str(ret).strip(), "1123")
+        chdb.drop_function("d32_md")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_date32_explicit_all(self):
+        @func(arg_types=[DATE32], return_type=DATE32)
+        def dec_d32_add_wk(d):
+            return d + datetime.timedelta(weeks=1)
+
+        ret = self.session.query("SELECT dec_d32_add_wk(toDate32('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-08"')
+        chdb.drop_function("dec_d32_add_wk")
+
+    def test_func_decorator_date32_return_only(self):
+        @func(return_type=DATE32)
+        def dec_d32_epoch(x):
+            return datetime.date(1970, 1, 1)
+
+        ret = self.session.query("SELECT dec_d32_epoch(42)", "CSV")
+        self.assertEqual(str(ret).strip(), '"1970-01-01"')
+        chdb.drop_function("dec_d32_epoch")
+
+    # ── special date32 cases ──
+
+    def test_date32_far_past(self):
+        chdb.create_function("d32_past", lambda d: d, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_past(toDate32('1925-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"1925-01-01"')
+        chdb.drop_function("d32_past")
+
+    def test_date32_far_future(self):
+        chdb.create_function("d32_future", lambda d: d, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_future(toDate32('2283-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2283-01-01"')
+        chdb.drop_function("d32_future")
+
+    def test_date32_isoformat(self):
+        chdb.create_function("d32_iso", lambda d: d.isoformat(), arg_types=[DATE32], return_type=STRING)
+        ret = self.session.query("SELECT d32_iso(toDate32('1950-06-15'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"1950-06-15"')
+        chdb.drop_function("d32_iso")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_date32_udf(self):
+        chdb.create_function("d32_to_drop", lambda d: d, arg_types=[DATE32], return_type=DATE32)
+        ret = self.session.query("SELECT d32_to_drop(toDate32('2024-01-01'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01"')
+        chdb.drop_function("d32_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT d32_to_drop(toDate32('2024-01-01'))", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=DATE32)
+        def d32_py_callable(d):
+            return d
+
+        result = d32_py_callable(datetime.date(2024, 1, 1))
+        self.assertEqual(result, datetime.date(2024, 1, 1))
+        chdb.drop_function("d32_py_callable")
 
 
 # ═══════════════════════════════════════════════════════════════════
 # DateTime Types
 # ═══════════════════════════════════════════════════════════════════
 
-
-@unittest.skip("TODO")
 class TestDateTimeUDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2688,7 +3602,9 @@ class TestDateTimeUDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_datetime_return_explicit_arg_types(self):
         def dt_identity(d):
             return d
 
@@ -2697,35 +3613,368 @@ class TestDateTimeUDF(unittest.TestCase):
         self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00"')
         chdb.drop_function("dt_id")
 
-    def test_string_type_name(self):
-        def dt_str_id(d):
+    def test_create_function_datetime_lambda_explicit(self):
+        chdb.create_function("dt_id2", lambda d: d, arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_id2(toDateTime('2024-06-15 08:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-06-15 08:00:00"')
+        chdb.drop_function("dt_id2")
+
+    # ── create_function: return_type only, no arg_types ──
+
+    def test_create_function_datetime_return_no_arg_types(self):
+        def const_dt(x):
+            return datetime.datetime(2024, 1, 1, 0, 0, 0,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt_const", const_dt, return_type=DATETIME)
+        ret = self.session.query("SELECT dt_const(42)", "CSV")
+        self.assertIn("2024-01-01", str(ret).strip())
+        chdb.drop_function("dt_const")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def dt_override(d: datetime.datetime) -> datetime.datetime:
             return d
 
-        chdb.create_function("dt_str_name", dt_str_id, arg_types=["DateTime"], return_type="DateTime")
-        ret = self.session.query("SELECT dt_str_name(toDateTime('2024-06-15 08:00:00'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-06-15 08:00:00"')
-        chdb.drop_function("dt_str_name")
+        chdb.create_function("dt_override", dt_override, arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_override(toDateTime('2024-07-04 12:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-04 12:00:00"')
+        chdb.drop_function("dt_override")
 
-    def test_func_decorator(self):
-        @func(arg_types=[DATETIME], return_type=INT32)
-        def dt_hour(d):
-            return d.hour
+    # ── create_function: string type names ──
 
+    def test_create_function_datetime_string_types(self):
+        chdb.create_function("dt_str_id", lambda d: d, arg_types=["DateTime"], return_type="DateTime")
+        ret = self.session.query("SELECT dt_str_id(toDateTime('2024-12-25 18:30:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-12-25 18:30:00"')
+        chdb.drop_function("dt_str_id")
+
+    # ── create_function: datetime as arg_type ──
+
+    def test_create_function_datetime_as_arg_type(self):
+        def add_hour(d):
+            return d + datetime.timedelta(hours=1)
+
+        chdb.create_function("dt_add_hr", add_hour, arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_add_hr(toDateTime('2024-01-15 23:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:00:00"')
+        chdb.drop_function("dt_add_hr")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("dt_dummy", dummy, arg_types=[DATETIME], return_type=DATETIME)
+
+    # ── extract datetime components ──
+
+    def test_extract_hour(self):
+        chdb.create_function("dt_hour", lambda d: d.hour, arg_types=[DATETIME], return_type=INT32)
         ret = self.session.query("SELECT dt_hour(toDateTime('2024-01-15 14:30:00'))", "CSV")
         self.assertEqual(str(ret).strip(), "14")
         chdb.drop_function("dt_hour")
 
-    def test_extract_components(self):
-        def dt_minute(d):
-            return d.minute
-
-        chdb.create_function("dt_minute", dt_minute, arg_types=[DATETIME], return_type=INT32)
+    def test_extract_minute(self):
+        chdb.create_function("dt_minute", lambda d: d.minute, arg_types=[DATETIME], return_type=INT32)
         ret = self.session.query("SELECT dt_minute(toDateTime('2024-01-15 10:45:00'))", "CSV")
         self.assertEqual(str(ret).strip(), "45")
         chdb.drop_function("dt_minute")
 
+    def test_extract_second(self):
+        chdb.create_function("dt_second", lambda d: d.second, arg_types=[DATETIME], return_type=INT32)
+        ret = self.session.query("SELECT dt_second(toDateTime('2024-01-15 10:30:59'))", "CSV")
+        self.assertEqual(str(ret).strip(), "59")
+        chdb.drop_function("dt_second")
 
-@unittest.skip("TODO")
+    def test_extract_date_from_datetime(self):
+        chdb.create_function("dt_date_part", lambda d: d.date(), arg_types=[DATETIME], return_type=DATE)
+        ret = self.session.query("SELECT dt_date_part(toDateTime('2024-01-15 14:30:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15"')
+        chdb.drop_function("dt_date_part")
+
+    # ── @func decorator: explicit return_type + explicit arg_types ──
+
+    def test_func_decorator_datetime_explicit_all(self):
+        @func(arg_types=[DATETIME], return_type=DATETIME)
+        def dec_dt_add_day(d):
+            return d + datetime.timedelta(days=1)
+
+        ret = self.session.query("SELECT dec_dt_add_day(toDateTime('2024-01-15 10:30:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 10:30:00"')
+        chdb.drop_function("dec_dt_add_day")
+
+    def test_func_decorator_datetime_return_only(self):
+        @func(return_type=DATETIME)
+        def dec_dt_const(x):
+            return datetime.datetime(2024, 6, 1, 12, 0, 0,
+                                     tzinfo=datetime.timezone.utc)
+
+        ret = self.session.query("SELECT dec_dt_const(42)", "CSV")
+        self.assertIn("2024-06-01", str(ret).strip())
+        chdb.drop_function("dec_dt_const")
+
+    # ── special datetime cases ──
+
+    def test_datetime_add_timedelta(self):
+        chdb.create_function("dt_add_30m", lambda d: d + datetime.timedelta(minutes=30),
+                             arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_add_30m(toDateTime('2024-01-15 23:45:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:15:00"')
+        chdb.drop_function("dt_add_30m")
+
+    def test_datetime_midnight(self):
+        chdb.create_function("dt_midnight", lambda d: d, arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_midnight(toDateTime('2024-01-15 00:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 00:00:00"')
+        chdb.drop_function("dt_midnight")
+
+    def test_datetime_to_string(self):
+        chdb.create_function("dt_to_str", lambda d: d.strftime("%Y/%m/%d %H:%M"),
+                             arg_types=[DATETIME], return_type=STRING)
+        ret = self.session.query("SELECT dt_to_str(toDateTime('2024-01-15 14:30:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024/01/15 14:30"')
+        chdb.drop_function("dt_to_str")
+
+    def test_datetime_has_timezone(self):
+        chdb.create_function("dt_has_tz", lambda d: d.tzinfo is not None,
+                             arg_types=[DATETIME], return_type=BOOL)
+        ret = self.session.query("SELECT dt_has_tz(toDateTime('2024-01-15 10:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), "true")
+        chdb.drop_function("dt_has_tz")
+
+    # ── string type with timezone ──
+
+    def test_datetime_string_type_utc(self):
+        chdb.create_function("dt_utc_id", lambda d: d,
+                             arg_types=["DateTime('UTC')"], return_type="DateTime('UTC')")
+        ret = self.session.query(
+            "SELECT dt_utc_id(toDateTime('2024-01-15 10:30:00', 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00"')
+        chdb.drop_function("dt_utc_id")
+
+    def test_datetime_string_type_shanghai(self):
+        chdb.create_function("dt_sh_id", lambda d: d,
+                             arg_types=["DateTime('Asia/Shanghai')"],
+                             return_type="DateTime('Asia/Shanghai')")
+        ret = self.session.query(
+            "SELECT dt_sh_id(toDateTime('2024-01-15 18:30:00', 'Asia/Shanghai'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 18:30:00"')
+        chdb.drop_function("dt_sh_id")
+
+    def test_datetime_string_type_new_york(self):
+        chdb.create_function("dt_ny_id", lambda d: d,
+                             arg_types=["DateTime('America/New_York')"],
+                             return_type="DateTime('America/New_York')")
+        ret = self.session.query(
+            "SELECT dt_ny_id(toDateTime('2024-07-15 14:30:00', 'America/New_York'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-15 14:30:00"')
+        chdb.drop_function("dt_ny_id")
+
+    def test_datetime_roundtrip_utc_timezone_preserves_time(self):
+        """UTC datetime round-trip: the displayed time must not shift."""
+        def add_one_hour(d):
+            return d + datetime.timedelta(hours=1)
+
+        chdb.create_function("dt_utc_add1h", add_one_hour,
+                             arg_types=["DateTime('UTC')"],
+                             return_type="DateTime('UTC')")
+        ret = self.session.query(
+            "SELECT dt_utc_add1h(toDateTime('2024-01-15 23:00:00', 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:00:00"')
+        chdb.drop_function("dt_utc_add1h")
+
+    def test_datetime_roundtrip_shanghai_timezone_preserves_time(self):
+        """Shanghai datetime round-trip: the displayed time must not shift."""
+        def add_one_hour(d):
+            return d + datetime.timedelta(hours=1)
+
+        chdb.create_function("dt_sh_add1h", add_one_hour,
+                             arg_types=["DateTime('Asia/Shanghai')"],
+                             return_type="DateTime('Asia/Shanghai')")
+        ret = self.session.query(
+            "SELECT dt_sh_add1h(toDateTime('2024-01-15 23:00:00', 'Asia/Shanghai'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:00:00"')
+        chdb.drop_function("dt_sh_add1h")
+
+    def test_datetime_udf_receives_correct_timezone_info(self):
+        """Verify the Python datetime object received by UDF carries the correct tzinfo."""
+        def get_tz_name(d):
+            return str(d.tzinfo)
+
+        chdb.create_function("dt_tz_name", get_tz_name,
+                             arg_types=["DateTime('Asia/Shanghai')"],
+                             return_type=STRING)
+        ret = self.session.query(
+            "SELECT dt_tz_name(toDateTime('2024-06-15 12:00:00', 'Asia/Shanghai'))", "CSV")
+        self.assertIn("Asia/Shanghai", str(ret).strip())
+        chdb.drop_function("dt_tz_name")
+
+    def test_datetime_udf_receives_utc_timezone_info(self):
+        def get_tz_name(d):
+            return str(d.tzinfo)
+
+        chdb.create_function("dt_tz_name_utc", get_tz_name,
+                             arg_types=["DateTime('UTC')"],
+                             return_type=STRING)
+        ret = self.session.query(
+            "SELECT dt_tz_name_utc(toDateTime('2024-06-15 12:00:00', 'UTC'))", "CSV")
+        self.assertIn("UTC", str(ret).strip())
+        chdb.drop_function("dt_tz_name_utc")
+
+    def test_datetime_cross_timezone_same_epoch(self):
+        """The same absolute moment stored in different timezones must produce the same epoch."""
+        results = {}
+        for tz, display_time, func_name in [
+            ("UTC", "2024-01-15 00:00:00", "dt_epoch_utc"),
+            ("Asia/Shanghai", "2024-01-15 08:00:00", "dt_epoch_sh"),
+            ("America/New_York", "2024-01-14 19:00:00", "dt_epoch_ny"),
+        ]:
+            chdb.create_function(
+                func_name, lambda d: int(d.timestamp()),
+                arg_types=[f"DateTime('{tz}')"], return_type=INT64)
+            ret = self.session.query(
+                f"SELECT {func_name}(toDateTime('{display_time}', '{tz}'))", "CSV")
+            results[tz] = int(str(ret).strip())
+            chdb.drop_function(func_name)
+
+        self.assertEqual(results["UTC"], results["Asia/Shanghai"],
+                         "UTC and Shanghai should represent the same epoch")
+        self.assertEqual(results["UTC"], results["America/New_York"],
+                         "UTC and New York should represent the same epoch")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_datetime_udf(self):
+        chdb.create_function("dt_to_drop", lambda d: d, arg_types=[DATETIME], return_type=DATETIME)
+        ret = self.session.query("SELECT dt_to_drop(toDateTime('2024-01-01 00:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01 00:00:00"')
+        chdb.drop_function("dt_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT dt_to_drop(toDateTime('2024-01-01 00:00:00'))", "CSV")
+
+    # ── timezone mismatch: UDF returns datetime in different tz than return_type ──
+
+    def test_udf_returns_utc_datetime_but_return_type_is_shanghai(self):
+        """UDF returns a UTC aware datetime, but return_type is DateTime('Asia/Shanghai').
+        ClickHouse stores the UTC epoch; display converts to Shanghai (+8h)."""
+        def make_utc(x):
+            return datetime.datetime(2024, 1, 15, 0, 0, 0,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt_tz_mis1", make_utc,
+                             return_type="DateTime('Asia/Shanghai')")
+        ret = self.session.query("SELECT dt_tz_mis1(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 08:00:00"')
+        chdb.drop_function("dt_tz_mis1")
+
+    def test_udf_returns_shanghai_datetime_but_return_type_is_utc(self):
+        """UDF returns a Shanghai aware datetime, but return_type is DateTime('UTC').
+        ClickHouse stores the UTC epoch; display shows UTC time."""
+        def make_shanghai(x):
+            tz_sh = datetime.timezone(datetime.timedelta(hours=8))
+            return datetime.datetime(2024, 1, 15, 8, 0, 0, tzinfo=tz_sh)
+
+        chdb.create_function("dt_tz_mis2", make_shanghai,
+                             return_type="DateTime('UTC')")
+        ret = self.session.query("SELECT dt_tz_mis2(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 00:00:00"')
+        chdb.drop_function("dt_tz_mis2")
+
+    def test_udf_returns_ny_datetime_but_return_type_is_shanghai(self):
+        """UDF returns New York time, return_type is Shanghai. Display should shift accordingly."""
+        def make_ny(x):
+            tz_ny = datetime.timezone(datetime.timedelta(hours=-5))
+            return datetime.datetime(2024, 7, 15, 10, 0, 0, tzinfo=tz_ny)
+
+        chdb.create_function("dt_tz_mis3", make_ny,
+                             return_type="DateTime('Asia/Shanghai')")
+        ret = self.session.query("SELECT dt_tz_mis3(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-15 23:00:00"')
+        chdb.drop_function("dt_tz_mis3")
+
+    # ── timezone mismatch: ClickHouse input tz differs from arg_type tz ──
+    #
+    # ClickHouse preserves the INPUT's original timezone when passing to UDF,
+    # regardless of the arg_type's declared timezone.
+
+    def test_input_utc_value_but_arg_type_is_shanghai(self):
+        def get_hour(d):
+            return d.hour
+
+        chdb.create_function("dt_in_mis1", get_hour,
+                             arg_types=["DateTime('Asia/Shanghai')"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt_in_mis1(toDateTime('2024-01-15 00:00:00', 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), "0",
+                         "UDF should see hour=0 (UTC), not 8 (Shanghai)")
+        chdb.drop_function("dt_in_mis1")
+
+    def test_input_shanghai_value_but_arg_type_is_utc(self):
+        def get_hour(d):
+            return d.hour
+
+        chdb.create_function("dt_in_mis2", get_hour,
+                             arg_types=["DateTime('UTC')"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt_in_mis2(toDateTime('2024-01-15 08:00:00', 'Asia/Shanghai'))", "CSV")
+        self.assertEqual(str(ret).strip(), "8",
+                         "UDF should see hour=8 (Shanghai), not 0 (UTC)")
+        chdb.drop_function("dt_in_mis2")
+
+    def test_input_tz_mismatch_same_epoch_verification(self):
+        """Both inputs represent the same absolute moment but in different tz.
+        Despite the arg_type tz mismatch, both should yield the same epoch."""
+        chdb.create_function("dt_epoch_a", lambda d: int(d.timestamp()),
+                             arg_types=["DateTime('Asia/Shanghai')"], return_type=INT64)
+        chdb.create_function("dt_epoch_b", lambda d: int(d.timestamp()),
+                             arg_types=["DateTime('UTC')"], return_type=INT64)
+
+        ret_a = self.session.query(
+            "SELECT dt_epoch_a(toDateTime('2024-01-15 00:00:00', 'UTC'))", "CSV")
+        ret_b = self.session.query(
+            "SELECT dt_epoch_b(toDateTime('2024-01-15 08:00:00', 'Asia/Shanghai'))", "CSV")
+
+        self.assertEqual(int(str(ret_a).strip()), int(str(ret_b).strip()),
+                         "Same absolute moment should yield same epoch regardless of arg_type tz")
+
+        chdb.drop_function("dt_epoch_a")
+        chdb.drop_function("dt_epoch_b")
+
+    def test_full_roundtrip_cross_tz_datetime(self):
+        """Full round-trip: input UTC, UDF adds 1h, output as Shanghai.
+        UTC 23:00 + 1h = UTC 00:00 next day = Shanghai 08:00 next day."""
+        def add_one_hour(d):
+            return d + datetime.timedelta(hours=1)
+
+        chdb.create_function("dt_full_rt", add_one_hour,
+                             arg_types=["DateTime('UTC')"],
+                             return_type="DateTime('Asia/Shanghai')")
+        ret = self.session.query(
+            "SELECT dt_full_rt(toDateTime('2024-01-15 23:00:00', 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 08:00:00"')
+        chdb.drop_function("dt_full_rt")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=DATETIME)
+        def dt_py_callable(d):
+            return d
+
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        result = dt_py_callable(now)
+        self.assertEqual(result, now)
+        chdb.drop_function("dt_py_callable")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DateTime64
+# ═══════════════════════════════════════════════════════════════════
+
 class TestDateTime64UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2733,48 +3982,630 @@ class TestDateTime64UDF(unittest.TestCase):
     def tearDown(self):
         self.session.close()
 
-    def test_create_function_explicit(self):
+    # ── create_function: explicit return_type + explicit arg_types ──
+
+    def test_create_function_datetime64_return_explicit_arg_types(self):
         def dt64_identity(d):
             return d
 
         chdb.create_function("dt64_id", dt64_identity, arg_types=[DATETIME64], return_type=DATETIME64)
-        ret = self.session.query("SELECT dt64_id(toDateTime64('2024-01-15 10:30:00.123', 3))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.123"')
+        ret = self.session.query("SELECT dt64_id(toDateTime64('2024-01-15 10:30:00.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.123456"')
         chdb.drop_function("dt64_id")
 
-    def test_string_type_name(self):
-        def dt64_str_id(d):
+    def test_create_function_datetime64_lambda_explicit(self):
+        chdb.create_function("dt64_id2", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_id2(toDateTime64('2024-06-15 08:00:00.456789', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-06-15 08:00:00.456789"')
+        chdb.drop_function("dt64_id2")
+
+    # ── create_function: return_type only, no arg_types ──
+
+    def test_create_function_datetime64_return_no_arg_types(self):
+        def const_dt64(x):
+            return datetime.datetime(2024, 1, 1, 0, 0, 0, 123000,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_const", const_dt64, return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_const(42)", "CSV")
+        self.assertIn("2024-01-01", str(ret).strip())
+        chdb.drop_function("dt64_const")
+
+    # ── create_function: infer return_type from annotation ──
+
+    def test_create_function_datetime64_infer_return_from_annotation(self):
+        def dt64_ret_only(d) -> datetime.datetime:
             return d
 
-        chdb.create_function("dt64_str_name", dt64_str_id,
-                             arg_types=["DateTime64(3)"], return_type="DateTime64(3)")
-        ret = self.session.query("SELECT dt64_str_name(toDateTime64('2024-06-15 08:00:00.456', 3))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-06-15 08:00:00.456"')
-        chdb.drop_function("dt64_str_name")
+        chdb.create_function("dt64_ret_only", dt64_ret_only)
+        ret = self.session.query("SELECT dt64_ret_only(toDateTime64('2024-03-20 12:00:00.500', 3))", "CSV")
+        self.assertIn("2024-03-20", str(ret).strip())
+        self.assertIn("12:00:00", str(ret).strip())
+        chdb.drop_function("dt64_ret_only")
 
-    def test_func_decorator(self):
-        @func(arg_types=[DATETIME64], return_type=INT32)
-        def dt64_ms(d):
-            return d.microsecond // 1000
+    # ── create_function: infer both arg_types and return_type from annotations ──
 
+    def test_create_function_datetime64_infer_all_from_annotations(self):
+        def dt64_infer(d: datetime.datetime) -> datetime.datetime:
+            return d
+
+        chdb.create_function("dt64_infer_all", dt64_infer)
+        ret = self.session.query("SELECT dt64_infer_all(toDateTime64('2024-01-15 10:30:00.123', 3))", "CSV")
+        self.assertIn("2024-01-15", str(ret).strip())
+        self.assertIn("10:30:00", str(ret).strip())
+        chdb.drop_function("dt64_infer_all")
+
+    # ── create_function: explicit arg_types override annotations ──
+
+    def test_create_function_explicit_arg_types_override_annotations(self):
+        def dt64_override(d: datetime.datetime) -> datetime.datetime:
+            return d
+
+        chdb.create_function("dt64_override", dt64_override, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_override(toDateTime64('2024-07-04 12:00:00.789012', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-04 12:00:00.789012"')
+        chdb.drop_function("dt64_override")
+
+    # ── create_function: string type names ──
+
+    def test_create_function_datetime64_string_types(self):
+        chdb.create_function("dt64_str_id", lambda d: d,
+                             arg_types=["DateTime64(6)"], return_type="DateTime64(6)")
+        ret = self.session.query("SELECT dt64_str_id(toDateTime64('2024-12-25 18:30:00.999999', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-12-25 18:30:00.999999"')
+        chdb.drop_function("dt64_str_id")
+
+    # ── create_function: datetime64 as arg_type ──
+
+    def test_create_function_datetime64_as_arg_type(self):
+        def add_half_sec(d):
+            return d + datetime.timedelta(milliseconds=500)
+
+        chdb.create_function("dt64_add_half", add_half_sec, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_add_half(toDateTime64('2024-01-15 10:30:00.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.500000"')
+        chdb.drop_function("dt64_add_half")
+
+    # ── create_function: arg_types count mismatch ──
+
+    def test_create_function_arg_types_count_mismatch(self):
+        def dummy(a, b):
+            return a
+
+        with self.assertRaises(RuntimeError):
+            chdb.create_function("dt64_dummy", dummy, arg_types=[DATETIME64], return_type=DATETIME64)
+
+    # ── compatible arg type: DateTime → DateTime64 ──
+
+    def test_create_function_compatible_arg_type_datetime_to_datetime64(self):
+        chdb.create_function("dt64_compat", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_compat(toDateTime('2024-03-01 12:00:00'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-03-01 12:00:00.000000"')
+        chdb.drop_function("dt64_compat")
+
+    # ── extract datetime64 components ──
+
+    def test_extract_hour(self):
+        chdb.create_function("dt64_hour", lambda d: d.hour, arg_types=[DATETIME64], return_type=INT32)
+        ret = self.session.query("SELECT dt64_hour(toDateTime64('2024-01-15 14:30:00.000', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), "14")
+        chdb.drop_function("dt64_hour")
+
+    def test_extract_minute(self):
+        chdb.create_function("dt64_minute", lambda d: d.minute, arg_types=[DATETIME64], return_type=INT32)
+        ret = self.session.query("SELECT dt64_minute(toDateTime64('2024-01-15 10:45:00.000', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), "45")
+        chdb.drop_function("dt64_minute")
+
+    def test_extract_second(self):
+        chdb.create_function("dt64_second", lambda d: d.second, arg_types=[DATETIME64], return_type=INT32)
+        ret = self.session.query("SELECT dt64_second(toDateTime64('2024-01-15 10:30:59.000', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), "59")
+        chdb.drop_function("dt64_second")
+
+    def test_extract_milliseconds(self):
+        chdb.create_function("dt64_ms", lambda d: d.microsecond // 1000,
+                             arg_types=[DATETIME64], return_type=INT32)
         ret = self.session.query("SELECT dt64_ms(toDateTime64('2024-01-15 10:30:00.789', 3))", "CSV")
         self.assertEqual(str(ret).strip(), "789")
         chdb.drop_function("dt64_ms")
 
-    def test_infer_all_from_annotations(self):
-        def dt64_infer(d: datetime.datetime) -> datetime.datetime:
+    def test_extract_microseconds(self):
+        chdb.create_function("dt64_us", lambda d: d.microsecond,
+                             arg_types=["DateTime64(6)"], return_type=INT32)
+        ret = self.session.query("SELECT dt64_us(toDateTime64('2024-01-15 10:30:00.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), "123456")
+        chdb.drop_function("dt64_us")
+
+    def test_extract_date_from_datetime64(self):
+        chdb.create_function("dt64_date", lambda d: d.date(), arg_types=[DATETIME64], return_type=DATE)
+        ret = self.session.query("SELECT dt64_date(toDateTime64('2024-01-15 14:30:00.123', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15"')
+        chdb.drop_function("dt64_date")
+
+    # ── @func decorator ──
+
+    def test_func_decorator_datetime64_explicit_all(self):
+        @func(arg_types=[DATETIME64], return_type=DATETIME64)
+        def dec_dt64_add_day(d):
+            return d + datetime.timedelta(days=1)
+
+        ret = self.session.query("SELECT dec_dt64_add_day(toDateTime64('2024-01-15 10:30:00.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 10:30:00.123456"')
+        chdb.drop_function("dec_dt64_add_day")
+
+    def test_func_decorator_datetime64_return_only(self):
+        @func(return_type=DATETIME64)
+        def dec_dt64_const(x):
+            return datetime.datetime(2024, 6, 1, 12, 0, 0, 500000,
+                                     tzinfo=datetime.timezone.utc)
+
+        ret = self.session.query("SELECT dec_dt64_const(42)", "CSV")
+        self.assertIn("2024-06-01", str(ret).strip())
+        chdb.drop_function("dec_dt64_const")
+
+    def test_func_decorator_datetime64_infer_all(self):
+        @func()
+        def dec_dt64_id(d: datetime.datetime) -> datetime.datetime:
             return d
 
-        chdb.create_function("dt64_infer", dt64_infer)
-        ret = self.session.query("SELECT dt64_infer(toDateTime64('2024-01-15 10:30:00.123', 3))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.123"')
-        chdb.drop_function("dt64_infer")
+        ret = self.session.query("SELECT dec_dt64_id(toDateTime64('2024-09-01 08:15:30.456', 3))", "CSV")
+        self.assertIn("2024-09-01", str(ret).strip())
+        self.assertIn("08:15:30", str(ret).strip())
+        chdb.drop_function("dec_dt64_id")
 
-    def test_compatible_arg_type_datetime_to_datetime64(self):
-        chdb.create_function("dt64_compat", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
-        ret = self.session.query("SELECT dt64_compat(toDateTime('2024-03-01 12:00:00'))", "CSV")
-        self.assertEqual(str(ret).strip(), '"2024-03-01 12:00:00.000"')
-        chdb.drop_function("dt64_compat")
+    # ── special datetime64 cases ──
+
+    def test_datetime64_sub_second_precision(self):
+        chdb.create_function("dt64_sub_sec", lambda d: d + datetime.timedelta(milliseconds=1),
+                             arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_sub_sec(toDateTime64('2024-01-15 10:30:00.999000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:01.000000"')
+        chdb.drop_function("dt64_sub_sec")
+
+    def test_datetime64_midnight(self):
+        chdb.create_function("dt64_midnight", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_midnight(toDateTime64('2024-01-15 00:00:00.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 00:00:00.000000"')
+        chdb.drop_function("dt64_midnight")
+
+    def test_datetime64_add_timedelta_30min(self):
+        chdb.create_function("dt64_add_30m", lambda d: d + datetime.timedelta(minutes=30),
+                             arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_add_30m(toDateTime64('2024-01-15 23:45:00.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:15:00.000000"')
+        chdb.drop_function("dt64_add_30m")
+
+    def test_datetime64_to_string(self):
+        chdb.create_function("dt64_to_str", lambda d: d.strftime("%Y/%m/%d %H:%M:%S"),
+                             arg_types=[DATETIME64], return_type=STRING)
+        ret = self.session.query("SELECT dt64_to_str(toDateTime64('2024-01-15 14:30:45.123', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024/01/15 14:30:45"')
+        chdb.drop_function("dt64_to_str")
+
+    def test_datetime64_to_isoformat(self):
+        chdb.create_function("dt64_iso", lambda d: d.isoformat(),
+                             arg_types=[DATETIME64], return_type=STRING)
+        ret = self.session.query("SELECT dt64_iso(toDateTime64('2024-01-15 10:30:00.123', 3))", "CSV")
+        self.assertIn("2024-01-15", str(ret).strip())
+        self.assertIn("10:30:00", str(ret).strip())
+        chdb.drop_function("dt64_iso")
+
+    def test_datetime64_has_timezone(self):
+        chdb.create_function("dt64_has_tz", lambda d: d.tzinfo is not None,
+                             arg_types=[DATETIME64], return_type=BOOL)
+        ret = self.session.query("SELECT dt64_has_tz(toDateTime64('2024-01-15 10:00:00.000', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), "true")
+        chdb.drop_function("dt64_has_tz")
+
+    def test_datetime64_zero_fractional(self):
+        chdb.create_function("dt64_zero_f", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_zero_f(toDateTime64('2024-01-15 10:30:00.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.000000"')
+        chdb.drop_function("dt64_zero_f")
+
+    # ── different scales via string type ──
+
+    def test_scale0_second_precision(self):
+        chdb.create_function("dt64_s0_id", lambda d: d,
+                             arg_types=["DateTime64(0)"], return_type="DateTime64(0)")
+        ret = self.session.query(
+            "SELECT dt64_s0_id(toDateTime64('2024-01-15 10:30:45', 0))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45"')
+        chdb.drop_function("dt64_s0_id")
+
+    def test_scale3_millisecond_precision(self):
+        chdb.create_function("dt64_s3_id", lambda d: d,
+                             arg_types=["DateTime64(3)"], return_type="DateTime64(3)")
+        ret = self.session.query(
+            "SELECT dt64_s3_id(toDateTime64('2024-01-15 10:30:45.123', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123"')
+        chdb.drop_function("dt64_s3_id")
+
+    def test_scale6_microsecond_precision(self):
+        chdb.create_function("dt64_s6_id", lambda d: d,
+                             arg_types=["DateTime64(6)"], return_type="DateTime64(6)")
+        ret = self.session.query(
+            "SELECT dt64_s6_id(toDateTime64('2024-01-15 10:30:45.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123456"')
+        chdb.drop_function("dt64_s6_id")
+
+    def test_scale9_nanosecond_precision(self):
+        chdb.create_function("dt64_s9_id", lambda d: d,
+                             arg_types=["DateTime64(9)"], return_type="DateTime64(9)")
+        ret = self.session.query(
+            "SELECT dt64_s9_id(toDateTime64('2024-01-15 10:30:45.123456000', 9))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123456000"')
+        chdb.drop_function("dt64_s9_id")
+
+    def test_scale6_preserves_full_microseconds(self):
+        chdb.create_function("dt64_s6_us", lambda d: d.microsecond,
+                             arg_types=["DateTime64(6)"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt64_s6_us(toDateTime64('2024-01-15 10:30:45.654321', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), "654321")
+        chdb.drop_function("dt64_s6_us")
+
+    def test_scale3_truncates_microseconds(self):
+        """scale=3 only preserves milliseconds; sub-ms digits are lost."""
+        chdb.create_function("dt64_s3_us", lambda d: d.microsecond,
+                             arg_types=["DateTime64(3)"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt64_s3_us(toDateTime64('2024-01-15 10:30:45.789', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), "789000")
+        chdb.drop_function("dt64_s3_us")
+
+    def test_add_microseconds_at_scale6(self):
+        def add_microseconds(d):
+            return d + datetime.timedelta(microseconds=500)
+
+        chdb.create_function("dt64_s6_add", add_microseconds,
+                             arg_types=["DateTime64(6)"], return_type="DateTime64(6)")
+        ret = self.session.query(
+            "SELECT dt64_s6_add(toDateTime64('2024-01-15 10:30:45.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.000500"')
+        chdb.drop_function("dt64_s6_add")
+
+    # ── cross-scale: arg_types and return_type have different scales ──
+
+    def test_input_scale6_return_scale3(self):
+        chdb.create_function("dt64_6to3", lambda d: d,
+                             arg_types=["DateTime64(6)"], return_type="DateTime64(3)")
+        ret = self.session.query(
+            "SELECT dt64_6to3(toDateTime64('2024-01-15 10:30:45.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123"')
+        chdb.drop_function("dt64_6to3")
+
+    def test_input_scale3_return_scale6(self):
+        chdb.create_function("dt64_3to6", lambda d: d,
+                             arg_types=["DateTime64(3)"], return_type="DateTime64(6)")
+        ret = self.session.query(
+            "SELECT dt64_3to6(toDateTime64('2024-01-15 10:30:45.789', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.789000"')
+        chdb.drop_function("dt64_3to6")
+
+    def test_input_scale6_return_scale9(self):
+        chdb.create_function("dt64_6to9", lambda d: d,
+                             arg_types=["DateTime64(6)"], return_type="DateTime64(9)")
+        ret = self.session.query(
+            "SELECT dt64_6to9(toDateTime64('2024-01-15 10:30:45.123456', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123456000"')
+        chdb.drop_function("dt64_6to9")
+
+    def test_input_scale9_return_scale3(self):
+        chdb.create_function("dt64_9to3", lambda d: d,
+                             arg_types=["DateTime64(9)"], return_type="DateTime64(3)")
+        ret = self.session.query(
+            "SELECT dt64_9to3(toDateTime64('2024-01-15 10:30:45.123456789', 9))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123"')
+        chdb.drop_function("dt64_9to3")
+
+    def test_input_scale0_return_scale6(self):
+        chdb.create_function("dt64_0to6", lambda d: d,
+                             arg_types=["DateTime64(0)"], return_type="DateTime64(6)")
+        ret = self.session.query(
+            "SELECT dt64_0to6(toDateTime64('2024-01-15 10:30:45', 0))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.000000"')
+        chdb.drop_function("dt64_0to6")
+
+    def test_input_scale3_return_scale9(self):
+        chdb.create_function("dt64_3to9", lambda d: d,
+                             arg_types=["DateTime64(3)"], return_type="DateTime64(9)")
+        ret = self.session.query(
+            "SELECT dt64_3to9(toDateTime64('2024-01-15 10:30:45.123', 3))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123000000"')
+        chdb.drop_function("dt64_3to9")
+
+    def test_input_scale9_return_scale6(self):
+        chdb.create_function("dt64_9to6", lambda d: d,
+                             arg_types=["DateTime64(9)"], return_type="DateTime64(6)")
+        ret = self.session.query(
+            "SELECT dt64_9to6(toDateTime64('2024-01-15 10:30:45.123456789', 9))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.123456"')
+        chdb.drop_function("dt64_9to6")
+
+    def test_input_scale0_return_scale3(self):
+        chdb.create_function("dt64_0to3", lambda d: d,
+                             arg_types=["DateTime64(0)"], return_type="DateTime64(3)")
+        ret = self.session.query(
+            "SELECT dt64_0to3(toDateTime64('2024-01-15 10:30:45', 0))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.000"')
+        chdb.drop_function("dt64_0to3")
+
+    def test_input_scale0_return_scale9(self):
+        chdb.create_function("dt64_0to9", lambda d: d,
+                             arg_types=["DateTime64(0)"], return_type="DateTime64(9)")
+        ret = self.session.query(
+            "SELECT dt64_0to9(toDateTime64('2024-01-15 10:30:45', 0))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:45.000000000"')
+        chdb.drop_function("dt64_0to9")
+
+    # ── return_type scale with UDF-constructed datetime ──
+
+    def test_udf_construct_datetime_return_scale3(self):
+        """UDF constructs datetime with microseconds, but return_type is scale=3 (truncated)."""
+        def make_dt(x):
+            return datetime.datetime(2024, 1, 15, 12, 0, 0, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_mk_s3", make_dt, return_type="DateTime64(3, 'UTC')")
+        ret = self.session.query("SELECT dt64_mk_s3(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 12:00:00.123"')
+        chdb.drop_function("dt64_mk_s3")
+
+    def test_udf_construct_datetime_return_scale9(self):
+        """UDF constructs datetime with microseconds, return_type is scale=9 (zero-padded)."""
+        def make_dt(x):
+            return datetime.datetime(2024, 1, 15, 12, 0, 0, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_mk_s9", make_dt, return_type="DateTime64(9, 'UTC')")
+        ret = self.session.query("SELECT dt64_mk_s9(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 12:00:00.123456000"')
+        chdb.drop_function("dt64_mk_s9")
+
+    def test_udf_construct_datetime_return_scale0(self):
+        """UDF constructs datetime with microseconds, return_type is scale=0 (seconds only)."""
+        def make_dt(x):
+            return datetime.datetime(2024, 1, 15, 12, 0, 0, 999999,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_mk_s0", make_dt, return_type="DateTime64(0, 'UTC')")
+        ret = self.session.query("SELECT dt64_mk_s0(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 12:00:00"')
+        chdb.drop_function("dt64_mk_s0")
+
+    # ── different timezones via string type ──
+
+    def test_utc_timezone(self):
+        chdb.create_function("dt64_utc_id", lambda d: d,
+                             arg_types=["DateTime64(3, 'UTC')"],
+                             return_type="DateTime64(3, 'UTC')")
+        ret = self.session.query(
+            "SELECT dt64_utc_id(toDateTime64('2024-01-15 10:30:00.123', 3, 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 10:30:00.123"')
+        chdb.drop_function("dt64_utc_id")
+
+    def test_shanghai_timezone(self):
+        chdb.create_function("dt64_sh_id", lambda d: d,
+                             arg_types=["DateTime64(3, 'Asia/Shanghai')"],
+                             return_type="DateTime64(3, 'Asia/Shanghai')")
+        ret = self.session.query(
+            "SELECT dt64_sh_id(toDateTime64('2024-01-15 18:30:00.456', 3, 'Asia/Shanghai'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 18:30:00.456"')
+        chdb.drop_function("dt64_sh_id")
+
+    def test_new_york_timezone(self):
+        chdb.create_function("dt64_ny_id", lambda d: d,
+                             arg_types=["DateTime64(6, 'America/New_York')"],
+                             return_type="DateTime64(6, 'America/New_York')")
+        ret = self.session.query(
+            "SELECT dt64_ny_id(toDateTime64('2024-07-15 14:30:00.789012', 6, 'America/New_York'))",
+            "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-15 14:30:00.789012"')
+        chdb.drop_function("dt64_ny_id")
+
+    def test_roundtrip_utc_preserves_time(self):
+        def add_half_sec(d):
+            return d + datetime.timedelta(milliseconds=500)
+
+        chdb.create_function("dt64_utc_add", add_half_sec,
+                             arg_types=["DateTime64(3, 'UTC')"],
+                             return_type="DateTime64(3, 'UTC')")
+        ret = self.session.query(
+            "SELECT dt64_utc_add(toDateTime64('2024-01-15 23:59:59.500', 3, 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:00:00.000"')
+        chdb.drop_function("dt64_utc_add")
+
+    def test_roundtrip_shanghai_preserves_time(self):
+        def add_half_sec(d):
+            return d + datetime.timedelta(milliseconds=500)
+
+        chdb.create_function("dt64_sh_add", add_half_sec,
+                             arg_types=["DateTime64(3, 'Asia/Shanghai')"],
+                             return_type="DateTime64(3, 'Asia/Shanghai')")
+        ret = self.session.query(
+            "SELECT dt64_sh_add(toDateTime64('2024-01-15 23:59:59.500', 3, 'Asia/Shanghai'))",
+            "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-16 00:00:00.000"')
+        chdb.drop_function("dt64_sh_add")
+
+    def test_udf_receives_correct_timezone_info(self):
+        def get_tz_name(d):
+            return str(d.tzinfo)
+
+        chdb.create_function("dt64_tz_name", get_tz_name,
+                             arg_types=["DateTime64(3, 'Asia/Shanghai')"],
+                             return_type=STRING)
+        ret = self.session.query(
+            "SELECT dt64_tz_name(toDateTime64('2024-06-15 12:00:00.000', 3, 'Asia/Shanghai'))",
+            "CSV")
+        self.assertIn("Asia/Shanghai", str(ret).strip())
+        chdb.drop_function("dt64_tz_name")
+
+    def test_cross_timezone_same_epoch(self):
+        results = {}
+        for tz, display_time, func_name in [
+            ("UTC", "2024-01-15 00:00:00.000", "dt64_ep_utc"),
+            ("Asia/Shanghai", "2024-01-15 08:00:00.000", "dt64_ep_sh"),
+            ("America/New_York", "2024-01-14 19:00:00.000", "dt64_ep_ny"),
+        ]:
+            chdb.create_function(
+                func_name, lambda d: int(d.timestamp()),
+                arg_types=[f"DateTime64(3, '{tz}')"], return_type=INT64)
+            ret = self.session.query(
+                f"SELECT {func_name}(toDateTime64('{display_time}', 3, '{tz}'))", "CSV")
+            results[tz] = int(str(ret).strip())
+            chdb.drop_function(func_name)
+
+        self.assertEqual(results["UTC"], results["Asia/Shanghai"],
+                         "UTC and Shanghai should represent the same epoch")
+        self.assertEqual(results["UTC"], results["America/New_York"],
+                         "UTC and New York should represent the same epoch")
+
+    def test_scale6_with_timezone_preserves_microseconds(self):
+        chdb.create_function("dt64_s6tz_us", lambda d: d.microsecond,
+                             arg_types=["DateTime64(6, 'UTC')"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt64_s6tz_us(toDateTime64('2024-01-15 10:30:45.654321', 6, 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), "654321")
+        chdb.drop_function("dt64_s6tz_us")
+
+    def test_construct_aware_datetime_in_udf(self):
+        def make_utc_noon(x):
+            return datetime.datetime(2024, 7, 1, 12, 0, 0, 500000,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_mk_utc", make_utc_noon,
+                             return_type="DateTime64(6, 'UTC')")
+        ret = self.session.query("SELECT dt64_mk_utc(1)", "CSV")
+        self.assertIn("2024-07-01", str(ret).strip())
+        self.assertIn("12:00:00.500000", str(ret).strip())
+        chdb.drop_function("dt64_mk_utc")
+
+    # ── timezone mismatch: UDF returns datetime in different tz than return_type ──
+
+    def test_udf_returns_utc_but_return_type_is_shanghai(self):
+        def make_utc_dt64(x):
+            return datetime.datetime(2024, 1, 15, 0, 0, 0, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_tz_mis1", make_utc_dt64,
+                             return_type="DateTime64(6, 'Asia/Shanghai')")
+        ret = self.session.query("SELECT dt64_tz_mis1(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 08:00:00.123456"')
+        chdb.drop_function("dt64_tz_mis1")
+
+    def test_udf_returns_shanghai_but_return_type_is_utc(self):
+        def make_shanghai_dt64(x):
+            tz_sh = datetime.timezone(datetime.timedelta(hours=8))
+            return datetime.datetime(2024, 1, 15, 8, 0, 0, 654321, tzinfo=tz_sh)
+
+        chdb.create_function("dt64_tz_mis2", make_shanghai_dt64,
+                             return_type="DateTime64(6, 'UTC')")
+        ret = self.session.query("SELECT dt64_tz_mis2(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 00:00:00.654321"')
+        chdb.drop_function("dt64_tz_mis2")
+
+    def test_udf_returns_ny_but_return_type_is_shanghai(self):
+        def make_ny_dt64(x):
+            tz_ny = datetime.timezone(datetime.timedelta(hours=-5))
+            return datetime.datetime(2024, 7, 15, 10, 0, 0, 100000, tzinfo=tz_ny)
+
+        chdb.create_function("dt64_tz_mis3", make_ny_dt64,
+                             return_type="DateTime64(6, 'Asia/Shanghai')")
+        ret = self.session.query("SELECT dt64_tz_mis3(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-15 23:00:00.100000"')
+        chdb.drop_function("dt64_tz_mis3")
+
+    # ── timezone mismatch: input tz differs from arg_type tz ──
+    #
+    # ClickHouse preserves the INPUT's original timezone when passing to UDF.
+
+    def test_input_utc_value_but_arg_type_is_shanghai(self):
+        def get_hour(d):
+            return d.hour
+
+        chdb.create_function("dt64_in_mis1", get_hour,
+                             arg_types=["DateTime64(3, 'Asia/Shanghai')"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt64_in_mis1(toDateTime64('2024-01-15 00:00:00.000', 3, 'UTC'))", "CSV")
+        self.assertEqual(str(ret).strip(), "0",
+                         "UDF should see hour=0 (UTC), not 8 (Shanghai)")
+        chdb.drop_function("dt64_in_mis1")
+
+    def test_input_shanghai_value_but_arg_type_is_utc(self):
+        def get_hour(d):
+            return d.hour
+
+        chdb.create_function("dt64_in_mis2", get_hour,
+                             arg_types=["DateTime64(3, 'UTC')"], return_type=INT32)
+        ret = self.session.query(
+            "SELECT dt64_in_mis2(toDateTime64('2024-01-15 08:00:00.000', 3, 'Asia/Shanghai'))",
+            "CSV")
+        self.assertEqual(str(ret).strip(), "8",
+                         "UDF should see hour=8 (Shanghai), not 0 (UTC)")
+        chdb.drop_function("dt64_in_mis2")
+
+    def test_full_roundtrip_cross_tz(self):
+        """Input Shanghai, UDF adds 500ms, output as UTC."""
+        def add_half_sec(d):
+            return d + datetime.timedelta(milliseconds=500)
+
+        chdb.create_function("dt64_full_rt", add_half_sec,
+                             arg_types=["DateTime64(3, 'Asia/Shanghai')"],
+                             return_type="DateTime64(3, 'UTC')")
+        ret = self.session.query(
+            "SELECT dt64_full_rt(toDateTime64('2024-01-15 08:00:00.500', 3, 'Asia/Shanghai'))",
+            "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-15 00:00:01.000"')
+        chdb.drop_function("dt64_full_rt")
+
+    # ── return_type scale + timezone combined ──
+
+    def test_return_scale3_with_utc_timezone(self):
+        def make_dt(x):
+            return datetime.datetime(2024, 3, 15, 10, 30, 45, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_s3tz", make_dt,
+                             return_type="DateTime64(3, 'UTC')")
+        ret = self.session.query("SELECT dt64_s3tz(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-03-15 10:30:45.123"')
+        chdb.drop_function("dt64_s3tz")
+
+    def test_return_scale9_with_shanghai_timezone(self):
+        def make_dt(x):
+            return datetime.datetime(2024, 3, 15, 10, 30, 45, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_s9tz", make_dt,
+                             return_type="DateTime64(9, 'Asia/Shanghai')")
+        ret = self.session.query("SELECT dt64_s9tz(1)", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-03-15 18:30:45.123456000"')
+        chdb.drop_function("dt64_s9tz")
+
+    # ── drop_function removes UDF ──
+
+    def test_drop_function_removes_datetime64_udf(self):
+        chdb.create_function("dt64_to_drop", lambda d: d, arg_types=[DATETIME64], return_type=DATETIME64)
+        ret = self.session.query("SELECT dt64_to_drop(toDateTime64('2024-01-01 00:00:00.000000', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-01-01 00:00:00.000000"')
+        chdb.drop_function("dt64_to_drop")
+        with self.assertRaises(Exception):
+            self.session.query("SELECT dt64_to_drop(toDateTime64('2024-01-01 00:00:00.000', 3))", "CSV")
+
+    # ── Python callability preserved ──
+
+    def test_func_decorator_preserves_python_callability(self):
+        @func(return_type=DATETIME64)
+        def dt64_py_callable(d):
+            return d
+
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        result = dt64_py_callable(now)
+        self.assertEqual(result, now)
+        chdb.drop_function("dt64_py_callable")
 
 
 if __name__ == "__main__":

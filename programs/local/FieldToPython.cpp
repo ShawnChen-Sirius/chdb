@@ -869,16 +869,14 @@ py::object convertColumnValueForUDF(
         auto field = column[index];
         auto days = field.safeGet<UInt64>();
         LocalDate ld(DayNum(static_cast<UInt16>(days)));
-        auto & cache = PythonImporter::ImportCache();
-        return cache.datetime.date()(ld.year(), ld.month(), ld.day());
+        return import_cache.datetime.date()(ld.year(), ld.month(), ld.day());
     }
     case TypeIndex::Date32:
     {
         auto field = column[index];
         auto days = field.safeGet<Int64>();
         LocalDate ld(ExtendedDayNum(static_cast<Int32>(days)));
-        auto & cache = PythonImporter::ImportCache();
-        return cache.datetime.date()(ld.year(), ld.month(), ld.day());
+        return import_cache.datetime.date()(ld.year(), ld.month(), ld.day());
     }
     case TypeIndex::DateTime:
     {
@@ -890,10 +888,9 @@ py::object convertColumnValueForUDF(
         const auto & tz = dt_type ? dt_type->getTimeZone() : utc_tz;
 
         LocalDateTime local_dt(static_cast<time_t>(seconds), tz);
-        auto & cache = PythonImporter::ImportCache();
         const String & tz_name = tz.getTimeZone();
-        auto tz_obj = cache.zoneinfo.ZoneInfo()(tz_name);
-        return cache.datetime.datetime()(
+        auto tz_obj = import_cache.zoneinfo.ZoneInfo()(tz_name);
+        return import_cache.datetime.datetime()(
             local_dt.year(), local_dt.month(), local_dt.day(),
             local_dt.hour(), local_dt.minute(), local_dt.second(),
             0, py::arg("tzinfo") = tz_obj);
@@ -915,10 +912,9 @@ py::object convertColumnValueForUDF(
         int microsecond = static_cast<int>((fractional * 1000000) / multiplier);
 
         LocalDateTime local_dt(seconds, tz);
-        auto & cache = PythonImporter::ImportCache();
         const String & tz_name = tz.getTimeZone();
-        auto tz_obj = cache.zoneinfo.ZoneInfo()(tz_name);
-        return cache.datetime.datetime()(
+        auto tz_obj = import_cache.zoneinfo.ZoneInfo()(tz_name);
+        return import_cache.datetime.datetime()(
             local_dt.year(), local_dt.month(), local_dt.day(),
             local_dt.hour(), local_dt.minute(), local_dt.second(),
             microsecond, py::arg("tzinfo") = tz_obj);

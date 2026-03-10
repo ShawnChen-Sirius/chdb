@@ -47,7 +47,7 @@ static void defineBaseTypes(py::module_ & m)
     m.attr("DATE32") = std::make_shared<ChdbPyType>(std::make_shared<DB::DataTypeDate32>());
 
     m.attr("DATETIME") = std::make_shared<ChdbPyType>(std::make_shared<DB::DataTypeDateTime>());
-    m.attr("DATETIME64") = std::make_shared<ChdbPyType>(std::make_shared<DB::DataTypeDateTime64>(3));
+    m.attr("DATETIME64") = std::make_shared<ChdbPyType>(std::make_shared<DB::DataTypeDateTime64>(6));
 }
 
 void ChdbPyType::initialize(py::module_ & parent)

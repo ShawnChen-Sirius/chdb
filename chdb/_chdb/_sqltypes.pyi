@@ -43,4 +43,4 @@ STRING: ChdbType      # value = String
 DATE: ChdbType        # value = Date
 DATE32: ChdbType      # value = Date32
 DATETIME: ChdbType    # value = DateTime
-DATETIME64: ChdbType  # value = DateTime64(3)
+DATETIME64: ChdbType  # value = DateTime64(6)

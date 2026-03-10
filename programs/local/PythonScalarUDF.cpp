@@ -692,7 +692,7 @@ void handleDatetime(
         case DB::TypeIndex::DateTime:
         {
             auto ts = value.attr("timestamp")();
-            column.insert(DB::Field(static_cast<UInt64>(ts.cast<uint64_t>())));
+            column.insert(DB::Field(static_cast<UInt64>(ts.cast<double>())));
             break;
         }
         case DB::TypeIndex::DateTime64:
