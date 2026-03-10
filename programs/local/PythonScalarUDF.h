@@ -9,13 +9,27 @@
 namespace CHDB
 {
 
+enum class NullHandling : uint8_t
+{
+    SKIP,
+    PASS,
+};
+
+enum class ExceptionHandling : uint8_t
+{
+    PROPAGATE,
+    IGNORE,
+};
+
 class PythonScalarUDF : public DB::IFunction
 {
 public:
     PythonScalarUDF(
         const String & name,
         py::function func,
-        DB::DataTypePtr return_type);
+        DB::DataTypePtr return_type,
+        NullHandling null_handling,
+        ExceptionHandling exception_handling);
 
     ~PythonScalarUDF() override;
 
@@ -26,6 +40,7 @@ public:
     size_t getNumberOfArguments() const override { return num_args; }
     bool isSuitableForShortCircuitArgumentsExecution(const DB::DataTypesWithConstInfo &) const override { return false; }
     bool isDeterministic() const override { return false; }
+    bool useDefaultImplementationForNulls() const override { return null_handling == NullHandling::SKIP; }
 
     DB::DataTypePtr getReturnTypeImpl(const DB::DataTypes & arguments) const override;
 
@@ -41,6 +56,8 @@ private:
     DB::DataTypes arg_types;
     size_t num_args;
     bool is_variadic;
+    NullHandling null_handling;
+    ExceptionHandling exception_handling;
 };
 
 } // namespace CHDB

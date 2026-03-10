@@ -17,4 +17,9 @@ pybind11::object convertFieldToPython(
     const DB::DataTypePtr & type,
     size_t index);
 
+pybind11::object convertColumnValueForUDF(
+    const DB::IColumn & column,
+    const DB::DataTypePtr & type,
+    size_t index);
+
 } // namespace CHDB

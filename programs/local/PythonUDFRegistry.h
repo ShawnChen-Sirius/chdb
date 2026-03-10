@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PybindWrapper.h"
+#include "PythonScalarUDF.h"
 
 #include <shared_mutex>
 #include <unordered_map>
@@ -22,7 +23,9 @@ public:
         const String & name,
         py::function func,
         DB::DataTypePtr return_type,
-        const py::list & arg_types_hint = py::list());
+        const py::list & arg_types_hint,
+        NullHandling null_handling,
+        ExceptionHandling exception_handling);
 
     DB::FunctionOverloadResolverPtr tryGetFunction(const String & name) const override;
 
@@ -34,7 +37,7 @@ public:
 
 private:
     std::unordered_map<String, std::shared_ptr<PythonScalarUDF>> udfs;
-    mutable std::shared_mutex mutex_;
+    mutable std::shared_mutex mutex;
 };
 
 
@@ -42,7 +45,9 @@ void registerPythonUDF(
     const String & name,
     py::function func,
     DB::DataTypePtr return_type,
-    const py::list & arg_types_hint = py::list());
+    const py::list & arg_types_hint,
+    NullHandling null_handling,
+    ExceptionHandling exception_handling);
 
 bool removePythonUDF(const String & name);
 

@@ -30,23 +30,25 @@ void PythonUDFRegistry::registerUDF(
     const String & name,
     py::function func,
     DB::DataTypePtr return_type,
-    const py::list & arg_types_hint)
+    const py::list & arg_types_hint,
+    NullHandling null_handling,
+    ExceptionHandling exception_handling)
 {
     py::gil_assert();
 
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(mutex);
 
     if (udfs.contains(name))
         throw DB::Exception(DB::ErrorCodes::FUNCTION_ALREADY_EXISTS, "Python UDF '{}' is already registered", name);
 
-    auto udf = std::make_shared<PythonScalarUDF>(name, std::move(func), std::move(return_type));
+    auto udf = std::make_shared<PythonScalarUDF>(name, std::move(func), std::move(return_type), null_handling, exception_handling);
     udf->initSignature(arg_types_hint);
     udfs[name] = std::move(udf);
 }
 
 DB::FunctionOverloadResolverPtr PythonUDFRegistry::tryGetFunction(const String & name) const
 {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(mutex);
     auto it = udfs.find(name);
     if (it == udfs.end())
         return nullptr;
@@ -56,7 +58,7 @@ DB::FunctionOverloadResolverPtr PythonUDFRegistry::tryGetFunction(const String &
 
 std::vector<String> PythonUDFRegistry::getRegisteredNames() const
 {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(mutex);
     std::vector<String> names;
     names.reserve(udfs.size());
     for (const auto & [n, _] : udfs)
@@ -68,7 +70,7 @@ bool PythonUDFRegistry::removeUDF(const String & name)
 {
     py::gil_assert();
 
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(mutex);
     return udfs.erase(name) > 0;
 }
 
@@ -76,7 +78,7 @@ void PythonUDFRegistry::clear()
 {
     py::gil_assert();
 
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(mutex);
     udfs.clear();
 }
 
@@ -84,10 +86,12 @@ void registerPythonUDF(
     const String & name,
     py::function func,
     DB::DataTypePtr return_type,
-    const py::list & arg_types_hint)
+    const py::list & arg_types_hint,
+    NullHandling null_handling,
+    ExceptionHandling exception_handling)
 {
     PythonUDFRegistry::instance().registerUDF(
-        name, std::move(func), std::move(return_type), arg_types_hint);
+        name, std::move(func), std::move(return_type), arg_types_hint, null_handling, exception_handling);
 }
 
 bool removePythonUDF(const String & name)

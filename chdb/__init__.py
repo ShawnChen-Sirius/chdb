@@ -247,6 +247,8 @@ sql = query
 PyReader = _chdb.PyReader
 create_function = _chdb.create_function
 drop_function = _chdb.drop_function
+NullHandling = _chdb.NullHandling
+ExceptionHandling = _chdb.ExceptionHandling
 
 from . import dbapi, session, udf, utils  # noqa: E402
 from .udf import func  # noqa: E402
@@ -261,6 +263,8 @@ __all__ = [
     "func",
     "create_function",
     "drop_function",
+    "NullHandling",
+    "ExceptionHandling",
     "chdb_version",
     "engine_version",
     "to_df",

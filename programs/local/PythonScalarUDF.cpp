@@ -13,6 +13,7 @@
 #include <DataTypes/DataTypeFactory.h>
 #include <base/defines.h>
 #include <Common/Exception.h>
+#include <IO/readIntText.h>
 
 
 namespace DB
@@ -221,18 +222,75 @@ void resolveArgTypes(
         arg_types.push_back(annotationToDataType(py::reinterpret_borrow<py::object>(item)));
 }
 
+bool isSupportedUDFType(DB::TypeIndex type_id)
+{
+    switch (type_id)
+    {
+        case DB::TypeIndex::UInt8:
+        case DB::TypeIndex::UInt16:
+        case DB::TypeIndex::UInt32:
+        case DB::TypeIndex::UInt64:
+        case DB::TypeIndex::UInt128:
+        case DB::TypeIndex::UInt256:
+        case DB::TypeIndex::Int8:
+        case DB::TypeIndex::Int16:
+        case DB::TypeIndex::Int32:
+        case DB::TypeIndex::Int64:
+        case DB::TypeIndex::Int128:
+        case DB::TypeIndex::Int256:
+        case DB::TypeIndex::Float32:
+        case DB::TypeIndex::Float64:
+        case DB::TypeIndex::String:
+        case DB::TypeIndex::Date:
+        case DB::TypeIndex::Date32:
+        case DB::TypeIndex::DateTime:
+        case DB::TypeIndex::DateTime64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void validateUDFTypes(
+    const String & name,
+    const DB::DataTypePtr & return_type,
+    const DB::DataTypes & arg_types)
+{
+    auto raw_return = DB::removeNullable(return_type);
+    if (!isSupportedUDFType(raw_return->getTypeId()))
+        throw DB::Exception(
+            DB::ErrorCodes::BAD_ARGUMENTS,
+            "Python UDF '{}': unsupported return type '{}'",
+            name, raw_return->getName());
+
+    for (size_t i = 0; i < arg_types.size(); ++i)
+    {
+        if (!arg_types[i])
+            continue;
+        if (!isSupportedUDFType(arg_types[i]->getTypeId()))
+            throw DB::Exception(
+                DB::ErrorCodes::BAD_ARGUMENTS,
+                "Python UDF '{}': unsupported argument {} type '{}'",
+                name, i + 1, arg_types[i]->getName());
+    }
+}
+
 } // anonymous namespace
 
 
 PythonScalarUDF::PythonScalarUDF(
     const String & name_,
     py::function func_,
-    DB::DataTypePtr return_type_)
+    DB::DataTypePtr return_type_,
+    NullHandling null_handling_,
+    ExceptionHandling exception_handling_)
     : name(name_)
     , func(std::move(func_))
     , return_type(return_type_ ? DB::makeNullable(std::move(return_type_)) : nullptr)
     , num_args(0)
     , is_variadic(true)
+    , null_handling(null_handling_)
+    , exception_handling(exception_handling_)
 {}
 
 void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
@@ -258,6 +316,22 @@ void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
                     "Python UDF '{}': parameter '{}' after *args is not supported", name, String(param_name));
 
             const auto & value = item.second;
+            auto kind = ParameterKind::fromString(String(py::str(value.attr("kind"))));
+
+            if (kind == ParameterKind::Type::VAR_POSITIONAL)
+            {
+                found_varargs = true;
+                continue;
+            }
+
+            if (kind != ParameterKind::Type::POSITIONAL_ONLY
+                && kind != ParameterKind::Type::POSITIONAL_OR_KEYWORD)
+                throw DB::Exception(
+                    DB::ErrorCodes::BAD_ARGUMENTS,
+                    "Python UDF '{}': parameter '{}' is {}, only positional parameters are supported",
+                    name, String(param_name), String(py::str(value.attr("kind"))));
+
+            positional_count++;
 
             if (no_arg_types_hint)
             {
@@ -267,18 +341,6 @@ void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
                 else
                     arg_types.push_back(annotationToDataType(arg_annotation));
             }
-
-            auto kind = ParameterKind::fromString(String(py::str(value.attr("kind"))));
-            if (kind == ParameterKind::Type::VAR_POSITIONAL)
-                found_varargs = true;
-            else if (kind == ParameterKind::Type::POSITIONAL_ONLY
-                     || kind == ParameterKind::Type::POSITIONAL_OR_KEYWORD)
-                positional_count++;
-            else
-                throw DB::Exception(
-                    DB::ErrorCodes::BAD_ARGUMENTS,
-                    "Python UDF '{}': parameter '{}' is {}, only positional parameters are supported",
-                    name, String(param_name), String(py::str(value.attr("kind"))));
         }
 
         if (found_varargs)
@@ -301,7 +363,9 @@ void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
                 "Python UDF '{}': return type not specified", name);
 
         if (!no_arg_types_hint)
-            resolveArgTypes(name, arg_types_hint, arg_types_hint_count, arg_count, arg_types);
+            resolveArgTypes(name, arg_types_hint, arg_types_hint_count, positional_count, arg_types);
+
+        validateUDFTypes(name, return_type, arg_types);
     }
     catch (py::error_already_set & e)
     {
@@ -314,24 +378,36 @@ void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
 
 DB::DataTypePtr PythonScalarUDF::getReturnTypeImpl(const DB::DataTypes & arguments) const
 {
-    if (arguments.size() != arg_types.size())
+    if (is_variadic)
+    {
+        if (arguments.size() < arg_types.size())
+            throw DB::Exception(
+                DB::ErrorCodes::BAD_ARGUMENTS,
+                "Python UDF '{}': expected at least {} arguments, got {}",
+                name, arg_types.size(), arguments.size());
+    }
+    else if (arguments.size() != arg_types.size())
+    {
         throw DB::Exception(
             DB::ErrorCodes::BAD_ARGUMENTS,
             "Python UDF '{}': expected {} arguments, got {}",
             name, arg_types.size(), arguments.size());
+    }
 
-    for (size_t i = 0; i < arguments.size(); ++i)
+    const size_t check_count = std::min(arguments.size(), arg_types.size());
+    for (size_t i = 0; i < check_count; ++i)
     {
         auto arg_type = arg_types[i];
         if (!arg_type)
             continue;
 
-        auto supertype = DB::tryGetLeastSupertype(DB::DataTypes{arguments[i], arg_type});
+        auto actual_type = DB::removeNullable(arguments[i]);
+        auto supertype = DB::tryGetLeastSupertype(DB::DataTypes{actual_type, arg_type});
         if (!supertype || !supertype->equals(*arg_type))
             throw DB::Exception(
                 DB::ErrorCodes::BAD_ARGUMENTS,
                 "Python UDF '{}': argument {} type mismatch: expected {}, got {}",
-                name, i + 1, arg_types[i]->getName(), arguments[i]->getName());
+                name, i + 1, arg_type->getName(), actual_type->getName());
     }
 
     return return_type;
@@ -429,6 +505,48 @@ void handleInteger(
                     "Python integer out of range for type {}",
                     actual_type->getName());
             PyErr_Clear();
+        }
+
+        if (type_id == DB::TypeIndex::Int128 || type_id == DB::TypeIndex::UInt128
+            || type_id == DB::TypeIndex::Int256 || type_id == DB::TypeIndex::UInt256)
+        {
+            py::str py_str(value);
+            std::string s = py_str.cast<std::string>();
+            DB::ReadBufferFromMemory buf(s.data(), s.size());
+
+            switch (type_id)
+            {
+                case DB::TypeIndex::Int128:
+                {
+                    Int128 v;
+                    DB::readIntText(v, buf);
+                    column.insert(DB::Field(v));
+                    return;
+                }
+                case DB::TypeIndex::UInt128:
+                {
+                    UInt128 v;
+                    DB::readIntText(v, buf);
+                    column.insert(DB::Field(v));
+                    return;
+                }
+                case DB::TypeIndex::Int256:
+                {
+                    Int256 v;
+                    DB::readIntText(v, buf);
+                    column.insert(DB::Field(v));
+                    return;
+                }
+                case DB::TypeIndex::UInt256:
+                {
+                    UInt256 v;
+                    DB::readIntText(v, buf);
+                    column.insert(DB::Field(v));
+                    return;
+                }
+                default:
+                    break;
+            }
         }
 
         double number = PyLong_AsDouble(value.ptr());
@@ -707,7 +825,7 @@ DB::ColumnPtr PythonScalarUDF::executeImpl(
         for (size_t i = 0; i < arguments.size(); ++i)
         {
             const auto & col = arguments[i];
-            py_args[i] = convertFieldToPython(*col.column, col.type, row);
+            py_args[i] = convertColumnValueForUDF(*col.column, col.type, row);
         }
 
         py::object py_result;
@@ -717,10 +835,13 @@ DB::ColumnPtr PythonScalarUDF::executeImpl(
         }
         catch (py::error_already_set & e)
         {
-            throw DB::Exception(
-                DB::ErrorCodes::PY_EXCEPTION_OCCURED,
-                "Python UDF '{}' raised an exception at row {}: {}",
-                name, row, e.what());
+            if (exception_handling == ExceptionHandling::PROPAGATE)
+                throw DB::Exception(
+                    DB::ErrorCodes::PY_EXCEPTION_OCCURED,
+                    "Python UDF '{}' raised an exception at row {}: {}",
+                    name, row, e.what());
+            result_column->insertDefault();
+            continue;
         }
 
         insertPythonObjectToColumn(*result_column, return_type, py_result);
