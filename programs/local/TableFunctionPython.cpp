@@ -86,6 +86,9 @@ void TableFunctionPython::parseArguments(const ASTPtr & ast_function, ContextPtr
     }
     catch (py::error_already_set & e)
     {
+#if USE_JEMALLOC
+        ::Memory::MemoryCheckScope memory_check_scope;
+#endif
         throw Exception(ErrorCodes::PY_EXCEPTION_OCCURED, "Python exception occured: {}", e.what());
     }
 }

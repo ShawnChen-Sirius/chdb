@@ -28,7 +28,7 @@ on:
 
 env:
   # DEBUG_MODE disabled for all builds
-  EFFECTIVE_DEBUG_MODE: 'true'
+  EFFECTIVE_DEBUG_MODE: 'false'
 
 jobs:
   build_universal_wheel:
@@ -208,7 +208,7 @@ jobs:
           export CXX=/usr/bin/clang++
           # Use Debug for crash analysis when DEBUG_MODE is enabled
           if [ "${{ env.EFFECTIVE_DEBUG_MODE }}" == "true" ]; then
-            bash ./chdb/build.sh RelWithDebInfo
+            bash ./chdb/build.sh Debug
           else
             bash ./chdb/build.sh
           fi

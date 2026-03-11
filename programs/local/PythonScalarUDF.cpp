@@ -15,6 +15,10 @@
 #include <Common/Exception.h>
 #include <IO/readIntText.h>
 
+#if USE_JEMALLOC
+#include <Common/memory.h>
+#endif
+
 
 namespace DB
 {
@@ -369,6 +373,9 @@ void PythonScalarUDF::initSignature(const py::list & arg_types_hint)
     }
     catch (py::error_already_set & e)
     {
+#if USE_JEMALLOC
+        ::Memory::MemoryCheckScope memory_check_scope;
+#endif
         throw DB::Exception(
             DB::ErrorCodes::BAD_ARGUMENTS,
             "Python UDF '{}': failed to inspect function signature: {}",
@@ -836,10 +843,15 @@ DB::ColumnPtr PythonScalarUDF::executeImpl(
         catch (py::error_already_set & e)
         {
             if (exception_handling == ExceptionHandling::PROPAGATE)
+            {
+#if USE_JEMALLOC
+                ::Memory::MemoryCheckScope memory_check_scope;
+#endif
                 throw DB::Exception(
                     DB::ErrorCodes::PY_EXCEPTION_OCCURED,
                     "Python UDF '{}' raised an exception at row {}: {}",
                     name, row, e.what());
+            }
             result_column->insertDefault();
             continue;
         }
