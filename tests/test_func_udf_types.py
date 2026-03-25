@@ -4035,6 +4035,41 @@ class TestDateTime64UDF(unittest.TestCase):
         self.assertIn("10:30:00", str(ret).strip())
         chdb.drop_function("dt64_infer_all")
 
+    # ── annotation infers DateTime64(6): microsecond precision preserved ──
+
+    def test_datetime64_annotation_infers_scale6_microsecond_preserved(self):
+        """datetime.datetime annotation should infer DateTime64(6), preserving microseconds."""
+        def dt64_us(d: datetime.datetime) -> datetime.datetime:
+            return d
+
+        chdb.create_function("dt64_us", dt64_us)
+        ret = self.session.query(
+            "SELECT dt64_us(toDateTime64('2024-07-04 12:00:00.789012', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-07-04 12:00:00.789012"')
+        chdb.drop_function("dt64_us")
+
+    def test_datetime64_annotation_infers_scale6_construct_with_microseconds(self):
+        """UDF constructs datetime with microseconds; annotation-inferred scale=6 keeps them."""
+        def dt64_mk_us() -> datetime.datetime:
+            return datetime.datetime(2024, 1, 15, 12, 0, 0, 123456,
+                                     tzinfo=datetime.timezone.utc)
+
+        chdb.create_function("dt64_mk_us", dt64_mk_us)
+        ret = self.session.query("SELECT dt64_mk_us()", "CSV")
+        self.assertIn(".123456", str(ret).strip())
+        chdb.drop_function("dt64_mk_us")
+
+    def test_datetime64_annotation_infers_scale6_decorator(self):
+        """@func() with datetime annotations should also use scale=6."""
+        @func()
+        def dec_dt64_us(d: datetime.datetime) -> datetime.datetime:
+            return d
+
+        ret = self.session.query(
+            "SELECT dec_dt64_us(toDateTime64('2024-09-01 08:15:30.456789', 6))", "CSV")
+        self.assertEqual(str(ret).strip(), '"2024-09-01 08:15:30.456789"')
+        chdb.drop_function("dec_dt64_us")
+
     # ── create_function: explicit arg_types override annotations ──
 
     def test_create_function_explicit_arg_types_override_annotations(self):

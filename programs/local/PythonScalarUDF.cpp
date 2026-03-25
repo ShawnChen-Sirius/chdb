@@ -145,7 +145,7 @@ DB::DataTypePtr fromPythonType(const py::object & annotation)
     if (annotation.is(datetime_mod.attr("date")))
         return std::make_shared<DB::DataTypeDate>();
     if (annotation.is(datetime_mod.attr("datetime")))
-        return std::make_shared<DB::DataTypeDateTime64>(3);
+        return std::make_shared<DB::DataTypeDateTime64>(6);
 
     auto numpy_result = fromNumpyType(annotation);
     if (numpy_result)
