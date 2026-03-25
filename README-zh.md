@@ -22,7 +22,7 @@
 
 
 ## 特点
-     
+
 * 嵌入在 Python 中的 SQL OLAP 引擎，由 ClickHouse 驱动
 * 不需要安装 ClickHouse
 * 支持 Parquet、CSV、JSON、Arrow、ORC 和其他 60 多种格式的[输入输出](https://clickhouse.com/docs/en/interfaces/formats)，[示例](tests/format_output.py)。
@@ -185,20 +185,46 @@ conn1.close()
 </details>
 
 <details>
-    <summary><h4>🗂️ Query with UDF(User Defined Functions)</h4></summary>
+    <summary><h4>🗂️ Python UDF（用户自定义函数）</h4></summary>
+
+chDB 支持原生 Python UDF，在进程内直接运行，具备完整的类型安全。
 
 ```python
-from chdb.udf import chdb_udf
-from chdb import query
+from chdb import func, create_function, drop_function
+from chdb.session import Session
+from chdb.sqltypes import INT64, STRING
 
-@chdb_udf()
-def sum_udf(lhs, rhs):
-    return int(lhs) + int(rhs)
+sess = Session()
 
-print(query("select sum_udf(12,22)"))
+# 使用 @func 装饰器
+@func([INT64, INT64], INT64)
+def add(a, b):
+    return a + b
+
+print(sess.query("SELECT add(12, 22)"))
+
+# 通过类型注解自动推断类型
+@func()
+def multiply(a: int, b: int) -> int:
+    return a * b
+
+print(sess.query("SELECT multiply(3, 7)"))
+
+# 使用 create_function 直接注册
+create_function("strlen", len, arg_types=[STRING], return_type=INT64)
+print(sess.query("SELECT strlen('hello')"))
+
+# 移除已注册的函数
+drop_function("strlen")
 ```
 
-参见: [test_udf.py](tests/test_udf.py).
+主要特性：
+- **类型安全**：支持 `INT64`、`FLOAT64`、`STRING`、`BOOL`、`DATETIME64` 等，完整列表参见 [chdb.sqltypes](chdb/_chdb/_sqltypes.pyi)。
+- **类型推断**：从 Python 类型注解自动推断（`int`、`str`、`bool` 等）
+- **NULL 处理**：`on_null=NullHandling.SKIP`（默认）跳过函数调用并返回 NULL；`NullHandling.PASS` 将 `None` 传入函数。
+- **异常处理**：`on_error=ExceptionHandling.PROPAGATE`（默认）将异常抛给调用方；`ExceptionHandling.IGNORE` 对该行返回 NULL 并继续执行。
+
+参见：[test_func_udf.py](tests/test_func_udf.py)、[test_func_udf_types.py](tests/test_func_udf_types.py)。
 </details>
 
 <details>

@@ -375,45 +375,46 @@ conn1.close()
 
 
 <details>
-    <summary><h4>🗂️ Query with UDF (User Defined Functions)</h4></summary>
+    <summary><h4>🗂️ Python UDF (User Defined Functions)</h4></summary>
+
+chDB supports native Python UDFs that run in-process with full type safety.
 
 ```python
-from chdb.udf import chdb_udf
-from chdb import query
+from chdb import func, create_function, drop_function
+from chdb.session import Session
+from chdb.sqltypes import INT64, STRING
 
-@chdb_udf()
-def sum_udf(lhs, rhs):
-    return int(lhs) + int(rhs)
+sess = Session()
 
-print(query("select sum_udf(12,22)"))
+# Using the @func decorator
+@func([INT64, INT64], INT64)
+def add(a, b):
+    return a + b
+
+print(sess.query("SELECT add(12, 22)"))
+
+# With type annotations (types inferred automatically)
+@func()
+def multiply(a: int, b: int) -> int:
+    return a * b
+
+print(sess.query("SELECT multiply(3, 7)"))
+
+# Using create_function directly
+create_function("strlen", len, arg_types=[STRING], return_type=INT64)
+print(sess.query("SELECT strlen('hello')"))
+
+# Remove a registered function
+drop_function("strlen")
 ```
 
-Some notes on chDB Python UDF(User Defined Function) decorator.
-1. The function should be stateless. So, only UDFs are supported, not UDAFs(User Defined Aggregation Function).
-2. Default return type is String. If you want to change the return type, you can pass in the return type as an argument.
-    The return type should be one of the following: https://clickhouse.com/docs/en/sql-reference/data-types
-3. The function should take in arguments of type String. As the input is TabSeparated, all arguments are strings.
-4. The function will be called for each line of input. Something like this:
-    ```
-    def sum_udf(lhs, rhs):
-        return int(lhs) + int(rhs)
+Key features:
+- **Type-safe**: supports `INT64`, `FLOAT64`, `STRING`, `BOOL`, `DATETIME64`, etc. See [chdb.sqltypes](chdb/_chdb/_sqltypes.pyi) for full list.
+- **Type inference**: automatically inferred from Python annotations (`int`, `str`, `bool`, etc.)
+- **NULL handling**: `on_null=NullHandling.SKIP` (default) skips the function call and returns NULL; `NullHandling.PASS` passes `None` to the function.
+- **Exception handling**: `on_error=ExceptionHandling.PROPAGATE` (default) raises the error to the caller; `ExceptionHandling.IGNORE` returns NULL for that row and continues.
 
-    for line in sys.stdin:
-        args = line.strip().split('\t')
-        lhs = args[0]
-        rhs = args[1]
-        print(sum_udf(lhs, rhs))
-        sys.stdout.flush()
-    ```
-5. The function should be pure python function. You SHOULD import all python modules used IN THE FUNCTION.
-    ```
-    def func_use_json(arg):
-        import json
-        ...
-    ```
-6. Python interpertor used is the same as the one used to run the script. Get from `sys.executable`
-
-see also: [test_udf.py](tests/test_udf.py).
+See also: [test_func_udf.py](tests/test_func_udf.py), [test_func_udf_types.py](tests/test_func_udf_types.py).
 </details>
 
 
