@@ -211,6 +211,13 @@ jobs:
           sudo ln -s /usr/bin/clang++-19 /usr/bin/clang++
           which clang++
           clang++ --version
+      - name: Install patchelf
+        run: |
+          wget https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-aarch64.tar.gz -O patchelf.tar.gz
+          tar -xvf patchelf.tar.gz
+          sudo cp bin/patchelf /usr/bin/
+          sudo chmod +x /usr/bin/patchelf
+          patchelf --version
       - name: Run chdb/build.sh
         timeout-minutes: 600
         run: |
@@ -292,13 +299,6 @@ jobs:
           export CXX=/usr/bin/clang++
           pyenv shell 3.9
           make wheel
-      - name: Install patchelf from github
-        run: |
-          wget https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-aarch64.tar.gz -O patchelf.tar.gz
-          tar -xvf patchelf.tar.gz
-          sudo cp bin/patchelf /usr/bin/
-          sudo chmod +x /usr/bin/patchelf
-          patchelf --version
       - name: Audit wheels
         run: |
           export PATH="$HOME/.pyenv/bin:$PATH"

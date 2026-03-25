@@ -109,7 +109,7 @@ build_pybind11_nonlimitedapi() {
         # Add DT_NEEDED on _chdb.abi3.so so that RTLD_DEEPBIND can find
         # jemalloc-backed operator new/delete from _chdb instead of falling
         # through to a global libstdc++.
-        if [ "$(uname)" = "Linux" ]; then
+        if [ "$cross_compile" != true ] && [ "$(uname)" = "Linux" ]; then
             patchelf --add-needed _chdb.abi3.so \
                      --add-rpath '$ORIGIN' \
                      "${CHDB_DIR}/${lib_file}"
