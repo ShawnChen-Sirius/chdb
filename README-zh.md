@@ -338,32 +338,32 @@ chdb.query("SELECT b, sum(a) FROM Python(arrow_table) GROUP BY b ORDER BY b").sh
 chDB 支持原生 Python UDF，在进程内直接运行，具备完整的类型安全。
 
 ```python
-from chdb import func, create_function, drop_function
+import chdb
 from chdb.session import Session
 from chdb.sqltypes import INT64, STRING
 
 sess = Session()
 
-# 使用 @func 装饰器
-@func([INT64, INT64], INT64)
+# 使用 @chdb.func 装饰器
+@chdb.func([INT64, INT64], INT64)
 def add(a, b):
     return a + b
 
 print(sess.query("SELECT add(12, 22)"))
 
 # 通过类型注解自动推断类型
-@func()
+@chdb.func()
 def multiply(a: int, b: int) -> int:
     return a * b
 
 print(sess.query("SELECT multiply(3, 7)"))
 
-# 使用 create_function 直接注册
-create_function("strlen", len, arg_types=[STRING], return_type=INT64)
+# 使用 chdb.create_function 直接注册
+chdb.create_function("strlen", len, arg_types=[STRING], return_type=INT64)
 print(sess.query("SELECT strlen('hello')"))
 
 # 移除已注册的函数
-drop_function("strlen")
+chdb.drop_function("strlen")
 ```
 
 主要特性：

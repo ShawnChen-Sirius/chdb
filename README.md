@@ -338,32 +338,32 @@ see also: [test_query_py.py](tests/test_query_py.py).
 chDB supports native Python UDFs that run in-process with full type safety.
 
 ```python
-from chdb import func, create_function, drop_function
+import chdb
 from chdb.session import Session
 from chdb.sqltypes import INT64, STRING
 
 sess = Session()
 
-# Using the @func decorator
-@func([INT64, INT64], INT64)
+# Using the @chdb.func decorator
+@chdb.func([INT64, INT64], INT64)
 def add(a, b):
     return a + b
 
 print(sess.query("SELECT add(12, 22)"))
 
 # With type annotations (types inferred automatically)
-@func()
+@chdb.func()
 def multiply(a: int, b: int) -> int:
     return a * b
 
 print(sess.query("SELECT multiply(3, 7)"))
 
-# Using create_function directly
-create_function("strlen", len, arg_types=[STRING], return_type=INT64)
+# Using chdb.create_function directly
+chdb.create_function("strlen", len, arg_types=[STRING], return_type=INT64)
 print(sess.query("SELECT strlen('hello')"))
 
 # Remove a registered function
-drop_function("strlen")
+chdb.drop_function("strlen")
 ```
 
 Key features:
