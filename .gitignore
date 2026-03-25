@@ -262,3 +262,8 @@ libchdb.so
 /examples/ml-25m
 .clickhouse/
 test.py
+
+# Large test data files
+data.csv
+organizations-500000.*
+tests/organizations-500000.*
