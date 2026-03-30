@@ -21,8 +21,14 @@ def _chdb_zipfile_init(self, *args, **kwargs):
 zipfile.ZipFile.__init__ = _chdb_zipfile_init
 
 
+def is_free_threading():
+    """Check if this is a free-threading build, controlled by env var only."""
+    return os.environ.get("CHDB_FREE_THREADING") == "1"
+
+
 def get_python_ext_suffix():
-    # Use Limited API suffix for cross-version compatibility
+    if is_free_threading():
+        return sysconfig.get_config_var("EXT_SUFFIX")
     return ".abi3.so"
 
 
@@ -189,8 +195,6 @@ if __name__ == "__main__":
                 libraries=[],
                 library_dirs=[libdir],
                 extra_objects=[chdb_so],
-                define_macros=[("Py_LIMITED_API", "0x03090000")],
-                py_limited_api=True,
             ),
         ]
         # fix the version in chdb/__init__.py
@@ -207,16 +211,16 @@ if __name__ == "__main__":
             for file in files:
                 if file.endswith(".py") or file.endswith(".pyi") or file == "py.typed":
                     pkg_files.append(os.path.join(root, file))
-                # Include pybind11 nonlimitedapi libraries for all Python versions
-                elif file.startswith("libpybind11nonlimitedapi_chdb_") and (
-                    file.endswith(".dylib") or file.endswith(".so")
-                ):
-                    pkg_files.append(os.path.join(root, file))
-                # Include pybind11 stub library
-                elif file.startswith("libpybind11nonlimitedapi_stubs") and (
-                    file.endswith(".dylib") or file.endswith(".so")
-                ):
-                    pkg_files.append(os.path.join(root, file))
+                elif not is_free_threading():
+                    # Stable ABI builds need pybind11 nonlimitedapi shim + stubs libraries
+                    if file.startswith("libpybind11nonlimitedapi_chdb_") and (
+                        file.endswith(".dylib") or file.endswith(".so")
+                    ):
+                        pkg_files.append(os.path.join(root, file))
+                    elif file.startswith("libpybind11nonlimitedapi_stubs") and (
+                        file.endswith(".dylib") or file.endswith(".so")
+                    ):
+                        pkg_files.append(os.path.join(root, file))
 
         pkg_files.append(chdb_so)
 
@@ -234,11 +238,15 @@ if __name__ == "__main__":
             cmdclass={"build_ext": BuildExt},
             test_suite="tests",
             zip_safe=False,
-            options={
-                "bdist_wheel": {
-                    "py_limited_api": "cp39",
+            options=(
+                {}
+                if is_free_threading()
+                else {
+                    "bdist_wheel": {
+                        "py_limited_api": "cp39",
+                    }
                 }
-            },
+            ),
         )
     except Exception as e:
         print("Build from setup.py failed. Error: ")
