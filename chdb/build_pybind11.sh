@@ -88,7 +88,7 @@ build_pybind11_nonlimitedapi() {
         echo "Cross-compiling mode enabled, using Python headers from ${python_include_dir}"
     fi
 
-    cmake ${py_cmake_args} -DENABLE_PYTHON=1 ..
+    cmake ${py_cmake_args} -DENABLE_PYTHON=1 -DCMAKE_BUILD_TYPE=Release ..
 
     # Build only the pybind11 targets
     ninja pybind11nonlimitedapi_chdb_${py_version} || {

@@ -465,6 +465,17 @@ jobs:
           gh release upload ${{ github.ref_name }} linux-aarch64-libchdb-static.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Package debug symbols
+        run: |
+          ls *.debug
+          tar -czvf linux-aarch64-debuginfo.tar.gz *.debug
+          ls -lh linux-aarch64-debuginfo.tar.gz
+      - name: Upload debug symbols to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release upload ${{ github.ref_name }} linux-aarch64-debuginfo.tar.gz --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: chdb-artifacts-linux-aarch64
@@ -472,6 +483,7 @@ jobs:
             ./dist/*.whl
             ./linux-aarch64-libchdb.tar.gz
             ./linux-aarch64-libchdb-static.tar.gz
+            ./linux-aarch64-debuginfo.tar.gz
           overwrite: true
       - name: Upload pypi
         if: startsWith(github.ref, 'refs/tags/v')
