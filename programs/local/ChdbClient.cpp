@@ -89,6 +89,8 @@ void ChdbClient::cleanup()
         streaming_query_context.reset();
         connection.reset();
         client_context.reset();
+        global_context.reset();
+        session.reset();
     }
     catch (...)
     {
