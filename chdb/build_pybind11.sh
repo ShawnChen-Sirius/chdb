@@ -106,6 +106,15 @@ build_pybind11_nonlimitedapi() {
 
     if [ -f "${BUILD_DIR}/contrib/pybind11-cmake/${lib_file}" ]; then
         cp "${BUILD_DIR}/contrib/pybind11-cmake/${lib_file}" "${CHDB_DIR}/${lib_file}"
+        # Add DT_NEEDED on _chdb.abi3.so so that RTLD_DEEPBIND can find
+        # jemalloc-backed operator new/delete from _chdb instead of falling
+        # through to a global libstdc++.
+        if [ "$cross_compile" != true ] && [ "$(uname)" = "Linux" ]; then
+            patchelf --add-needed _chdb.abi3.so \
+                     --add-rpath '$ORIGIN' \
+                     "${CHDB_DIR}/${lib_file}"
+            echo "Patched ${lib_file}: added DT_NEEDED _chdb.abi3.so and RPATH \$ORIGIN"
+        fi
         echo "Copied ${lib_file} to ${CHDB_DIR}/"
         echo "Library location: $(realpath ${CHDB_DIR}/${lib_file})"
     else
