@@ -2640,6 +2640,32 @@ class TestFloat32UDF(unittest.TestCase):
         self.assertEqual(str(ret).strip(), "-8.5")
         chdb.drop_function("f32_neg_int_arg")
 
+    # ── verify Python receives float (not int) when arg_type is Float32 ──
+
+    def test_float32_int_input_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x + 0.5
+        chdb.create_function("f32_type_chk", capture, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_type_chk(toInt8(42))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertEqual(results[0][1], 42.0)
+        self.assertEqual(str(ret).strip(), "42.5")
+        chdb.drop_function("f32_type_chk")
+
+    def test_float32_uint16_input_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x * 2.0
+        chdb.create_function("f32_type_chk_u16", capture, arg_types=[FLOAT32], return_type=FLOAT32)
+        ret = self.session.query("SELECT f32_type_chk_u16(toUInt16(100))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertEqual(results[0][1], 100.0)
+        self.assertEqual(str(ret).strip(), "200")
+        chdb.drop_function("f32_type_chk_u16")
+
     def test_float32_mixed_int_and_float_args_with_cast(self):
         chdb.create_function("f32_mix", lambda a, b: a + b, arg_types=[FLOAT32, FLOAT32], return_type=FLOAT32)
         ret = self.session.query("SELECT f32_mix(toFloat32(3), toFloat32(0.14))", "CSV")
@@ -2923,6 +2949,56 @@ class TestFloat64UDF(unittest.TestCase):
         ret = self.session.query("SELECT f64_neg_int_arg(toInt32(-42))", "CSV")
         self.assertEqual(str(ret).strip(), "-41.5")
         chdb.drop_function("f64_neg_int_arg")
+
+    # ── verify Python receives float (not int) when arg_type is Float64 ──
+
+    def test_float64_int32_input_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x + 0.1
+        chdb.create_function("f64_type_chk_i32", capture, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_type_chk_i32(toInt32(99))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertEqual(results[0][1], 99.0)
+        self.assertAlmostEqual(float(str(ret).strip()), 99.1, places=10)
+        chdb.drop_function("f64_type_chk_i32")
+
+    def test_float64_int8_input_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x * 3.0
+        chdb.create_function("f64_type_chk_i8", capture, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_type_chk_i8(toInt8(7))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertEqual(results[0][1], 7.0)
+        self.assertEqual(str(ret).strip(), "21")
+        chdb.drop_function("f64_type_chk_i8")
+
+    def test_float64_uint32_input_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x / 4.0
+        chdb.create_function("f64_type_chk_u32", capture, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_type_chk_u32(toUInt32(500))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertEqual(results[0][1], 500.0)
+        self.assertEqual(str(ret).strip(), "125")
+        chdb.drop_function("f64_type_chk_u32")
+
+    def test_float64_native_float_still_received_as_python_float(self):
+        results = []
+        def capture(x):
+            results.append((type(x).__name__, x))
+            return x
+        chdb.create_function("f64_type_chk_f", capture, arg_types=[FLOAT64], return_type=FLOAT64)
+        ret = self.session.query("SELECT f64_type_chk_f(toFloat64(3.14))", "CSV")
+        self.assertEqual(results[0][0], "float")
+        self.assertAlmostEqual(results[0][1], 3.14, places=10)
+        self.assertAlmostEqual(float(str(ret).strip()), 3.14, places=10)
+        chdb.drop_function("f64_type_chk_f")
 
     # Int64/UInt64 do NOT auto-convert to Float64 (possible precision loss)
 

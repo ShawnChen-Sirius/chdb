@@ -776,16 +776,25 @@ py::object convertFieldToPython(
 	}
 }
 
+static bool isExpectedFloat(const DataTypePtr & expected_type)
+{
+    if (!expected_type)
+        return false;
+    auto id = removeNullable(expected_type)->getTypeId();
+    return id == TypeIndex::Float32 || id == TypeIndex::Float64;
+}
+
 py::object convertColumnValueForUDF(
     const IColumn & column,
     const DataTypePtr & type,
-    size_t index)
+    size_t index,
+    const DataTypePtr & expected_type)
 {
     if (column.isNullAt(index))
         return py::none();
 
     if (const auto * col_const = typeid_cast<const ColumnConst *>(&column))
-        return convertColumnValueForUDF(col_const->getDataColumn(), type, 0);
+        return convertColumnValueForUDF(col_const->getDataColumn(), type, 0, expected_type);
 
     DataTypePtr actual_type = removeNullable(type);
     auto & import_cache = PythonImporter::ImportCache();
@@ -798,6 +807,8 @@ py::object convertColumnValueForUDF(
         auto field = column[index];
         if (isBool(actual_type))
             return py::cast(field.safeGet<bool>());
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<UInt64>()));
         return py::cast(field.safeGet<UInt64>());
     }
     case TypeIndex::UInt16:
@@ -805,6 +816,8 @@ py::object convertColumnValueForUDF(
     case TypeIndex::UInt64:
     {
         auto field = column[index];
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<UInt64>()));
         return py::cast(field.safeGet<UInt64>());
     }
     case TypeIndex::UInt128:
@@ -831,6 +844,8 @@ py::object convertColumnValueForUDF(
     case TypeIndex::Int64:
     {
         auto field = column[index];
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<Int64>()));
         return py::cast(field.safeGet<Int64>());
     }
     case TypeIndex::Int128:

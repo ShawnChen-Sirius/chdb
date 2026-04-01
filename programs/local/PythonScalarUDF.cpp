@@ -832,7 +832,8 @@ DB::ColumnPtr PythonScalarUDF::executeImpl(
         for (size_t i = 0; i < arguments.size(); ++i)
         {
             const auto & col = arguments[i];
-            py_args[i] = convertColumnValueForUDF(*col.column, col.type, row);
+            DB::DataTypePtr expected = (i < arg_types.size() && arg_types[i]) ? arg_types[i] : nullptr;
+            py_args[i] = convertColumnValueForUDF(*col.column, col.type, row, expected);
         }
 
         py::object py_result;
