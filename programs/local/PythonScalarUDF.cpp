@@ -38,33 +38,6 @@ namespace CHDB
 namespace
 {
 
-struct ParameterKind
-{
-    enum class Type : uint8_t
-    {
-        POSITIONAL_ONLY,
-        POSITIONAL_OR_KEYWORD,
-        VAR_POSITIONAL,
-        KEYWORD_ONLY,
-        VAR_KEYWORD,
-    };
-
-    static Type fromString(const std::string & kind_str)
-    {
-        if (kind_str == "POSITIONAL_ONLY")
-            return Type::POSITIONAL_ONLY;
-        if (kind_str == "POSITIONAL_OR_KEYWORD")
-            return Type::POSITIONAL_OR_KEYWORD;
-        if (kind_str == "VAR_POSITIONAL")
-            return Type::VAR_POSITIONAL;
-        if (kind_str == "KEYWORD_ONLY")
-            return Type::KEYWORD_ONLY;
-        if (kind_str == "VAR_KEYWORD")
-            return Type::VAR_KEYWORD;
-        throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR, "Unknown parameter kind: '{}'", kind_str);
-    }
-};
-
 enum class PythonTypeObject : uint8_t {
 	INVALID,
 	BASE,
@@ -83,17 +56,6 @@ PythonTypeObject getPythonObjectType(const py::handle &type_object) {
 		return PythonTypeObject::TYPE;
 
 	return PythonTypeObject::INVALID;
-}
-
-py::object getSignature(const py::function & udf)
-{
-    const int32_t PYTHON_3_10_HEX = 0x030a00f0;
-	const auto python_version = PY_VERSION_HEX;
-
-    auto signature_func = py::module_::import("inspect").attr("signature");
-    if (python_version >= PYTHON_3_10_HEX)
-        return signature_func(udf, py::arg("eval_str") = true);
-    return signature_func(udf);
 }
 
 DB::DataTypePtr fromNumpyType(const py::object & type)
@@ -173,6 +135,8 @@ DB::DataTypePtr fromChdbPyType(const py::object & annotation)
 	return type_object->dataType();
 }
 
+} // anonymous namespace
+
 DB::DataTypePtr annotationToDataType(const py::object & annotation)
 {
     auto type_object = getPythonObjectType(annotation);
@@ -186,9 +150,50 @@ DB::DataTypePtr annotationToDataType(const py::object & annotation)
             return fromChdbPyType(annotation);
         case PythonTypeObject::INVALID:
         default:
-            throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS, "Unknown Python UDF return type annotation: {}",
-                std::string(py::str(annotation.get_type())));
+            throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS, "Unknown Python UDF type annotation: {}",
+                String(py::str(annotation.get_type())));
     }
+}
+
+namespace
+{
+
+struct ParameterKind
+{
+    enum class Type : uint8_t
+    {
+        POSITIONAL_ONLY,
+        POSITIONAL_OR_KEYWORD,
+        VAR_POSITIONAL,
+        KEYWORD_ONLY,
+        VAR_KEYWORD,
+    };
+
+    static Type fromString(const std::string & kind_str)
+    {
+        if (kind_str == "POSITIONAL_ONLY")
+            return Type::POSITIONAL_ONLY;
+        if (kind_str == "POSITIONAL_OR_KEYWORD")
+            return Type::POSITIONAL_OR_KEYWORD;
+        if (kind_str == "VAR_POSITIONAL")
+            return Type::VAR_POSITIONAL;
+        if (kind_str == "KEYWORD_ONLY")
+            return Type::KEYWORD_ONLY;
+        if (kind_str == "VAR_KEYWORD")
+            return Type::VAR_KEYWORD;
+        throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR, "Unknown parameter kind: '{}'", kind_str);
+    }
+};
+
+py::object getSignature(const py::function & udf)
+{
+    const int32_t PYTHON_3_10_HEX = 0x030a00f0;
+	const auto python_version = PY_VERSION_HEX;
+
+    auto signature_func = py::module_::import("inspect").attr("signature");
+    if (python_version >= PYTHON_3_10_HEX)
+        return signature_func(udf, py::arg("eval_str") = true);
+    return signature_func(udf);
 }
 
 DB::DataTypePtr inferReturnType(const py::object & signature, const py::object & empty)

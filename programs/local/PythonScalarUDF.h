@@ -60,4 +60,6 @@ private:
     ExceptionHandling exception_handling;
 };
 
+DB::DataTypePtr annotationToDataType(const py::object & annotation);
+
 } // namespace CHDB

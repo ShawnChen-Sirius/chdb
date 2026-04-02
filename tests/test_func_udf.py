@@ -556,6 +556,36 @@ class TestUDFBulkAndComplexSQL(unittest.TestCase):
         chdb.drop_function("upper_if_long")
 
 
+class TestUDFPythonNativeTypes(unittest.TestCase):
+    """Verify that arg_types and return_type accept Python native types,
+    and that annotation-based inference produces identical results."""
+
+    def setUp(self):
+        self.session = Session()
+
+    def tearDown(self):
+        self.session.close()
+
+    def test_annotation_equivalent_to_explicit_native_types(self):
+        def fmt_anno(n: int, s: str) -> str:
+            return f"{s}:{n}"
+
+        def fmt_explicit(n, s):
+            return f"{s}:{n}"
+
+        chdb.create_function("fmt_anno", fmt_anno)
+        chdb.create_function("fmt_explicit", fmt_explicit, arg_types=[int, str], return_type=str)
+
+        sql = "SELECT {}(toInt64(42), 'val')"
+        ret_anno = str(self.session.query(sql.format("fmt_anno"), "CSV")).strip()
+        ret_explicit = str(self.session.query(sql.format("fmt_explicit"), "CSV")).strip()
+        self.assertEqual(ret_anno, '"val:42"')
+        self.assertEqual(ret_anno, ret_explicit)
+
+        chdb.drop_function("fmt_anno")
+        chdb.drop_function("fmt_explicit")
+
+
 class TestUDFUnsupportedArgTypes(unittest.TestCase):
     def setUp(self):
         self.session = Session()

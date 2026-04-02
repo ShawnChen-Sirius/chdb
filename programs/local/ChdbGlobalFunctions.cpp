@@ -4,6 +4,7 @@
 #include "PythonUDFRegistry.h"
 
 #include <algorithm>
+#include <tuple>
 #include <Common/Exception.h>
 
 
@@ -19,7 +20,9 @@ std::shared_ptr<ChdbPyType> toChdbPyType(const py::object & obj)
         return obj.cast<std::shared_ptr<ChdbPyType>>();
     if (py::isinstance<py::str>(obj))
         return std::make_shared<ChdbPyType>(obj.cast<std::string>());
-    throw std::runtime_error("return_type must be a ChdbType or a string, got " + std::string(py::str(obj.get_type())));
+    if (py::isinstance<py::type>(obj))
+        return std::make_shared<ChdbPyType>(annotationToDataType(obj));
+    throw std::runtime_error("return_type must be a ChdbType, a string, or a Python type, got " + String(py::str(obj.get_type())));
 }
 
 std::string toLower(std::string s)
@@ -101,7 +104,7 @@ void dropFunction(const std::string & name)
 {
     try
     {
-        removePythonUDF(name);
+        std::ignore = removePythonUDF(name);
     }
     catch (const DB::Exception & e)
     {
@@ -152,10 +155,9 @@ void registerGlobalFunctions(py::module_ & m)
         &dropFunction,
         py::arg("name"),
         "Remove a previously registered Python scalar UDF.\n\n"
+        "Does nothing if the function is not registered.\n\n"
         "Args:\n"
         "    name (str): Name of the function to remove.\n"
-        "Raises:\n"
-        "    RuntimeError: If the function is not registered.\n"
         "Example:\n"
         "    chdb.drop_function('add_int')");
 }
