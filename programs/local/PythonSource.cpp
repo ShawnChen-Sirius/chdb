@@ -12,7 +12,9 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
+#ifndef CHDB_FREE_THREADING
 #include <pybind11/detail/non_limited_api.h>
+#endif
 
 #include <Columns/ColumnVector.h>
 #include <Poco/Logger.h>
@@ -119,7 +121,18 @@ void PythonSource::insert_string_from_array(const py::handle obj, const MutableC
     auto * string_column = static_cast<ColumnString *>(column.get());
     for (auto && item : array)
     {
-        FillColumnString(item.ptr(), string_column);
+        auto * item_ptr = item.ptr();
+        // FillColumnString assumes the item is a Python unicode object and uses
+        // PyUnicode_* macros that reinterpret_cast obj to PyCompactUnicodeObject.
+        // Array items can be None/NaN/bytes/etc., so validate here and fall back
+        // to insertObjToStringColumn for non-unicode items (mirrors the pattern
+        // in convert_string_array_to_block).
+        if (!PyUnicode_Check(item_ptr))
+        {
+            insertObjToStringColumn(item_ptr, string_column);
+            continue;
+        }
+        FillColumnString(item_ptr, string_column);
     }
 }
 

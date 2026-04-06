@@ -4,7 +4,9 @@
 #include <pybind11/gil.h>
 #include <pybind11/pytypes.h>
 #include <pybind11/numpy.h>
+#ifndef CHDB_FREE_THREADING
 #include <pybind11/detail/non_limited_api.h>
+#endif
 #include <utf8proc.h>
 #include <Columns/ColumnString.h>
 #include <Common/logger_useful.h>
@@ -90,23 +92,59 @@ void FillColumnString(PyObject * obj, ColumnString * column)
     size_t codepoint_cnt;
     bool direct_insert;
 
-    /// Due to the use of Python's Stable C API, many Python C API functions cannot be used
-    /// directly within chdb. The related code has been moved to libpybind11nonlimitedapi_chdb,
-    /// and the wrapped interfaces are called through pybind11::non_limited_api namespace.
-    if (pybind11::non_limited_api::getPyUnicodeUtf8(obj, data, length, kind, codepoint_cnt, direct_insert))
+#ifdef CHDB_FREE_THREADING
+    direct_insert = true;
+
+    if (PyUnicode_IS_COMPACT_ASCII(obj))
     {
-        if (direct_insert)
-        {
-            column->insertData(data, length);
-        }
-        else
-        {
-            ConvertPyUnicodeToUtf8(data, kind, codepoint_cnt, column->getOffsets(), column->getChars());
-        }
+        data = reinterpret_cast<const char *>(PyUnicode_1BYTE_DATA(obj));
+        length = PyUnicode_GET_LENGTH(obj);
     }
     else
     {
+        auto * unicode = reinterpret_cast<PyCompactUnicodeObject *>(obj);
+        if (unicode->utf8 != nullptr)
+        {
+            data = reinterpret_cast<const char *>(unicode->utf8);
+            length = unicode->utf8_length;
+        }
+        else if (PyUnicode_IS_COMPACT(obj))
+        {
+            kind = PyUnicode_KIND(obj);
+            if (kind == PyUnicode_1BYTE_KIND)
+                data = reinterpret_cast<const char *>(PyUnicode_1BYTE_DATA(obj));
+            else if (kind == PyUnicode_2BYTE_KIND)
+                data = reinterpret_cast<const char *>(PyUnicode_2BYTE_DATA(obj));
+            else if (kind == PyUnicode_4BYTE_KIND)
+                data = reinterpret_cast<const char *>(PyUnicode_4BYTE_DATA(obj));
+            else
+                throw Exception(ErrorCodes::PY_EXCEPTION_OCCURED, "Failed to convert Python unicode object to UTF-8");
+
+            codepoint_cnt = PyUnicode_GET_LENGTH(obj);
+            direct_insert = false;
+        }
+        else
+        {
+            pybind11::gil_scoped_acquire acquire;
+            Py_ssize_t bytes_size = -1;
+            data = PyUnicode_AsUTF8AndSize(obj, &bytes_size);
+            if (!data || bytes_size < 0)
+                throw Exception(ErrorCodes::PY_EXCEPTION_OCCURED, "Failed to convert Python unicode object to UTF-8");
+            length = bytes_size;
+        }
+    }
+#else
+    if (!pybind11::non_limited_api::getPyUnicodeUtf8(obj, data, length, kind, codepoint_cnt, direct_insert))
         throw Exception(ErrorCodes::PY_EXCEPTION_OCCURED, "Failed to convert Python unicode object to UTF-8");
+#endif
+
+    if (direct_insert)
+    {
+        column->insertData(data, length);
+    }
+    else
+    {
+        ConvertPyUnicodeToUtf8(data, kind, codepoint_cnt, column->getOffsets(), column->getChars());
     }
 }
 

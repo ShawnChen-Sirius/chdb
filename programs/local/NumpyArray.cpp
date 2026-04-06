@@ -429,6 +429,10 @@ static bool CHColumnUUIDToNumpyArray(NumpyAppendData & append_data)
 	auto * dest_ptr = reinterpret_cast<PyObject **>(append_data.target_data);
 	auto * mask_ptr = append_data.target_mask;
 
+	/// Hoisted out of the per-row loop: ImportCache() returns a shared_ptr singleton,
+	/// so resolving it once per call avoids redundant shared_ptr ref-count traffic.
+	auto & import_cache = PythonImporter::ImportCache();
+
 	for (size_t i = 0; i < append_data.src_count; i++)
 	{
 		size_t src_index = append_data.src_offset + i;
@@ -448,7 +452,6 @@ static bool CHColumnUUIDToNumpyArray(NumpyAppendData & append_data)
 			const size_t uuid_str_len = formatted_uuid.size();
 
 			/// Create Python uuid.UUID object
-			auto & import_cache = PythonImporter::ImportCache();
 			py::handle uuid_handle = import_cache.uuid.UUID()(String(uuid_str, uuid_str_len)).release();
 			dest_ptr[dest_index] = uuid_handle.ptr();
 			mask_ptr[dest_index] = false;
@@ -478,6 +481,10 @@ static bool CHColumnIPv4ToNumpyArray(NumpyAppendData & append_data)
 	auto * dest_ptr = reinterpret_cast<PyObject **>(append_data.target_data);
 	auto * mask_ptr = append_data.target_mask;
 
+	/// Hoisted out of the per-row loop: ImportCache() returns a shared_ptr singleton,
+	/// so resolving it once per call avoids redundant shared_ptr ref-count traffic.
+	auto & import_cache = PythonImporter::ImportCache();
+
 	for (size_t i = 0; i < append_data.src_count; i++)
 	{
 		size_t src_index = append_data.src_offset + i;
@@ -499,7 +506,6 @@ static bool CHColumnIPv4ToNumpyArray(NumpyAppendData & append_data)
 			const size_t ipv4_str_len = ptr - ipv4_str;
 
 			/// Create Python ipaddress.IPv4Address object
-			auto & import_cache = PythonImporter::ImportCache();
 			py::handle ipv4_handle = import_cache.ipaddress.ipv4_address()(String(ipv4_str, ipv4_str_len)).release();
 			dest_ptr[dest_index] = ipv4_handle.ptr();
 			mask_ptr[dest_index] = false;
@@ -529,6 +535,10 @@ static bool CHColumnIPv6ToNumpyArray(NumpyAppendData & append_data)
 	auto * dest_ptr = reinterpret_cast<PyObject **>(append_data.target_data);
 	auto * mask_ptr = append_data.target_mask;
 
+	/// Hoisted out of the per-row loop: ImportCache() returns a shared_ptr singleton,
+	/// so resolving it once per call avoids redundant shared_ptr ref-count traffic.
+	auto & import_cache = PythonImporter::ImportCache();
+
 	for (size_t i = 0; i < append_data.src_count; i++)
 	{
 		size_t src_index = append_data.src_offset + i;
@@ -551,7 +561,6 @@ static bool CHColumnIPv6ToNumpyArray(NumpyAppendData & append_data)
 			const size_t ipv6_str_len = ptr - ipv6_str;
 
 			/// Create Python ipaddress.IPv6Address object
-			auto & import_cache = PythonImporter::ImportCache();
 			py::handle ipv6_handle = import_cache.ipaddress.ipv6_address()(String(ipv6_str, ipv6_str_len)).release();
 			dest_ptr[dest_index] = ipv6_handle.ptr();
 			mask_ptr[dest_index] = false;
