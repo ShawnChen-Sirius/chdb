@@ -250,7 +250,7 @@ if [ ${build_type} == "Debug" ]; then
     echo -e "\nDebug build, skip strip and debug symbol extraction"
 elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nExtracting debug symbols before strip..."
-    DSYMUTIL=$(which llvm-dsymutil-19 2>/dev/null || which llvm-dsymutil 2>/dev/null || which ${CCTOOLS_BIN}/${DARWIN_TRIPLE}-dsymutil 2>/dev/null || true)
+    DSYMUTIL=$(which dsymutil-19 2>/dev/null || which llvm-dsymutil-19 2>/dev/null || which dsymutil 2>/dev/null || which llvm-dsymutil 2>/dev/null || which ${CCTOOLS_BIN}/${DARWIN_TRIPLE}-dsymutil 2>/dev/null || true)
     if [ -n "${DSYMUTIL}" ]; then
         ${DSYMUTIL} ${PYCHDB} -o ${PYCHDB}.dSYM
         ${DSYMUTIL} ${LIBCHDB} -o ${LIBCHDB}.dSYM
