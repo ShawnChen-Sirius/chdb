@@ -250,7 +250,7 @@ LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
 
 if [ ${build_type} == "Debug" ]; then
     echo -e "\nDebug build, skip strip and debug symbol extraction"
-else
+elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nExtracting debug symbols before strip..."
     if [ "$(uname)" == "Darwin" ]; then
         dsymutil ${PYCHDB} -o ${PYCHDB}.dSYM
@@ -280,8 +280,16 @@ else
         ${OBJCOPY} --add-gnu-debuglink=${PYCHDB}.debug ${PYCHDB}
         ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
     fi
+else
+    echo -e "\n${build_type} build, strip without debug symbol extraction"
+    if [ "$(uname)" == "Darwin" ]; then
+        ${STRIP} -S -x ${PYCHDB}
+        ${STRIP} -S -x ${LIBCHDB}
+    else
+        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
+        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+    fi
 fi
-echo -e "\nStripped the binary:"
 
 echo -e "\nPYCHDB: ${PYCHDB}"
 ls -lh ${PYCHDB}
@@ -300,12 +308,14 @@ rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
 cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
-if [ "$(uname)" == "Darwin" ]; then
-    cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
-    cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
-else
-    cp -a ${PYCHDB}.debug ${PROJ_DIR}/${CHDB_PY_MODULE}.debug
-    cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
+if [ ${build_type} == "RelWithDebInfo" ]; then
+    if [ "$(uname)" == "Darwin" ]; then
+        cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
+        cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+    else
+        cp -a ${PYCHDB}.debug ${PROJ_DIR}/${CHDB_PY_MODULE}.debug
+        cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
+    fi
 fi
 
 echo -e "\nSymbols:"

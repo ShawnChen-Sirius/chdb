@@ -247,8 +247,8 @@ PYCHDB=${LIBCHDB_DIR}/${CHDB_PY_MODULE}
 LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
 
 if [ ${build_type} == "Debug" ]; then
-    echo -e "\nDebug build, skip strip"
-else
+    echo -e "\nDebug build, skip strip and debug symbol extraction"
+elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nExtracting debug symbols before strip..."
     DSYMUTIL=$(which llvm-dsymutil-19 2>/dev/null || which llvm-dsymutil 2>/dev/null || which ${CCTOOLS_BIN}/${DARWIN_TRIPLE}-dsymutil 2>/dev/null || true)
     if [ -n "${DSYMUTIL}" ]; then
@@ -262,6 +262,10 @@ else
     fi
 
     echo -e "\nStrip the binary:"
+    ${STRIP} -S -x ${PYCHDB}
+    ${STRIP} -S -x ${LIBCHDB}
+else
+    echo -e "\n${build_type} build, strip without debug symbol extraction"
     ${STRIP} -S -x ${PYCHDB}
     ${STRIP} -S -x ${LIBCHDB}
 fi
@@ -279,8 +283,10 @@ rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
 cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
-cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
-cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+if [ ${build_type} == "RelWithDebInfo" ]; then
+    cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
+    cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+fi
 
 echo -e "\nSymbols:"
 echo -e "\nPyInit in PYCHDB: ${PYCHDB}"
