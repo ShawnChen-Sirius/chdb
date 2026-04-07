@@ -64,8 +64,11 @@ PythonObjectType GetPythonObjectType(const py::handle & obj)
 	if (py::isinstance(obj, import_cache.datetime.timedelta()))
 		return PythonObjectType::Timedelta;
 
-	if (py::isinstance(obj, import_cache.numpy.datetime64()))
-		return PythonObjectType::NdDatetime;
+	{
+		auto ndt = import_cache.numpy.datetime64();
+		if (ndt.ptr() && py::isinstance(obj, ndt))
+			return PythonObjectType::NdDatetime;
+	}
 
 	if (py::isinstance(obj, import_cache.decimal.Decimal()))
 		return PythonObjectType::Decimal;
