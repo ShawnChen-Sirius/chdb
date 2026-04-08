@@ -10,6 +10,8 @@
 #include "IPAddressCacheItem.h"
 #include "ZoneInfoCacheItem.h"
 
+#include <memory>
+#include <mutex>
 #include <vector>
 
 namespace CHDB {
@@ -36,6 +38,7 @@ public:
 	py::handle AddCache(py::object item);
 
 private:
+	std::mutex cache_mutex;
 	std::vector<py::object> owned_objects;
 };
 
