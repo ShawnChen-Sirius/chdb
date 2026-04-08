@@ -650,13 +650,75 @@ Error Handling and Debugging
    else:
        print("Query failed - check your data and SQL syntax")
 
+Disabling the Python function
+-----------------------------
+
+You may want to disable access to the `Python` function when handling untrusted or semi-untrusted input. Do so by setting `allow_python_function = 0`:
+
+.. code-block:: python
+
+   import pandas as pd
+   import chdb
+
+   df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+   result = chdb.query('''
+       SET allow_python_function = 0;
+       SELECT * FROM Python(df);
+   ''')
+   # RuntimeError: Python table function is disabled
+
+
+Note that when using :func:`chdb.query <chdb.query>` this setting does not persist between calls:
+
+.. code-block:: python
+
+   import pandas as pd
+   import chdb
+
+   df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+   # First query disables the Python function
+   result = chdb.query('SET allow_python_function = 0')
+
+   # Second query will work
+   result = chdb.query('SELECT * FROM Python(df)')
+   print(result)
+
+
+To persist, use :doc:`session`:
+
+.. code-block:: python
+
+   import pandas as pd
+   from chdb.session import Session
+
+   df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+   sess = Session()
+   sess.query('SET allow_python_function = 0')
+
+   # Second query in the same session now fails
+   try:
+       result = sess.query('SELECT * FROM Python(df)')
+   except Exception as e:
+       print(e)
+       # RuntimeError: Python table function is disabled
+
+   # Once disabled, it cannot be re-enabled within the same session
+   try:
+       sess.query('SET allow_python_function = 1')
+   except Exception as e:
+       print(e)
+       # RuntimeError: Cannot modify 'allow_python_function'
+
 Next Steps
 ----------
 
 These examples demonstrate chDB's versatility and power. To continue learning:
 
 - Explore the :doc:`udf` guide for custom functions
-- Check :doc:`session` for stateful operations  
+- Check :doc:`session` for stateful operations
 - Review :doc:`api` for DB-API 2.0 compatibility and complete API reference
 - See :doc:`api` for complete function reference
 

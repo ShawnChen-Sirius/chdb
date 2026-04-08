@@ -3902,6 +3902,15 @@ Possible values:
 - [Sampling Query Profiler](../../operations/optimizing-performance/sampling-query-profiler.md)
 - System table [trace_log](/operations/system-tables/trace_log)
 )", 0) \
+    DECLARE(Bool, allow_python_function, true, R"(
+Enables or disables the [Python](../../sql-reference/table-functions/python.md) table function. Set to 0 when you don't want queries to be able to reference variables declared in Python.
+
+Possible values:
+- 1 - Python table function enabled (default).
+- 0 - Python table function disabled.
+
+Once disabled, it cannot be re-enabled for the same session.
+)", 0) \
     DECLARE(Bool, splitby_max_substrings_includes_remaining_string, false, R"(
 Controls whether function [splitBy*()](../../sql-reference/functions/splitting-merging-functions.md) with argument `max_substrings` > 0 will include the remaining string in the last element of the result array.
 

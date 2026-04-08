@@ -17,6 +17,7 @@ namespace DB
 namespace Setting
 {
     extern const SettingsBool allow_ddl;
+    extern const SettingsBool allow_python_function;
     extern const SettingsUInt64 readonly;
 }
 
@@ -437,6 +438,9 @@ SettingsConstraints::Checker SettingsConstraints::getChecker(const Settings & cu
     auto resolved_name = resolveSettingNameWithCache(setting_name);
     if (!current_settings[Setting::allow_ddl] && resolved_name == "allow_ddl")
         return Checker(PreformattedMessage::create("Cannot modify 'allow_ddl' setting when DDL queries are prohibited for the user"),
+                       ErrorCodes::QUERY_IS_PROHIBITED);
+    if (!current_settings[Setting::allow_python_function] && resolved_name == "allow_python_function")
+        return Checker(PreformattedMessage::create("Cannot modify 'allow_python_function' setting when Python table function is disabled for the user"),
                        ErrorCodes::QUERY_IS_PROHIBITED);
 
     /** The `readonly` value is understood as follows:
