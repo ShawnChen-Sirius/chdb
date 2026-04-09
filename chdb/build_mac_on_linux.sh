@@ -48,14 +48,32 @@ else
 fi
 
 # Download macOS SDK
+# Use a download-then-verify-then-extract flow rather than the original
+# `curl -L | tar xJ` pipe: GitHub release-assets CDN occasionally serves a
+# short HTML/error body for this asset, which the old pipe would silently
+# stream into xz and abort the build. -f makes curl fail on HTTP errors,
+# --retry/--retry-all-errors rides out CDN blips, and the size check catches
+# any remaining short-payload pathology before extraction.
 SDK_PATH="${PROJ_DIR}/cmake/toolchain/${SDK_DIR}"
+SDK_URL='https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.0.sdk.tar.xz'
 echo "Downloading macOS SDK to ${SDK_PATH}..."
 mkdir -p "${SDK_PATH}"
 cd "${SDK_PATH}"
-if ! curl -L 'https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.0.sdk.tar.xz' | tar xJ --strip-components=1; then
-    echo "Error: Failed to download macOS SDK"
+if ! curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+     -o MacOSX11.0.sdk.tar.xz "${SDK_URL}"; then
+    echo "Error: Failed to download macOS SDK from ${SDK_URL}"
     exit 1
 fi
+sdk_size=$(stat -c %s MacOSX11.0.sdk.tar.xz 2>/dev/null || stat -f %z MacOSX11.0.sdk.tar.xz)
+if [ "${sdk_size:-0}" -lt 10000000 ]; then
+    echo "Error: SDK tarball too small (${sdk_size} bytes) — likely a CDN error body, aborting"
+    exit 1
+fi
+if ! tar xJf MacOSX11.0.sdk.tar.xz --strip-components=1; then
+    echo "Error: Failed to extract macOS SDK"
+    exit 1
+fi
+rm -f MacOSX11.0.sdk.tar.xz
 echo "macOS SDK downloaded successfully"
 
 # Download Python headers
@@ -253,7 +271,16 @@ fi
 
 # Build chdb python module
 CHDB_PYTHON_INCLUDE_DIR_PREFIX="${HOME}/python_include"
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=1 -DCHDB_CROSSCOMPILING=1 -DCHDB_PYTHON_INCLUDE_DIR_PREFIX=${CHDB_PYTHON_INCLUDE_DIR_PREFIX} -DPYBIND11_NOPYTHON=ON ..
+FREE_THREADING_CMAKE=""
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    if [ -z "${CHDB_FREE_THREADING_PYTHON_VERSION}" ]; then
+        echo "Error: CHDB_FREE_THREADING=1 requires CHDB_FREE_THREADING_PYTHON_VERSION (e.g. 3.13t)"
+        exit 1
+    fi
+    FT_PY_VERSION="${CHDB_FREE_THREADING_PYTHON_VERSION}"
+    FREE_THREADING_CMAKE="-DCHDB_FREE_THREADING=1 -DCHDB_FREE_THREADING_PYTHON_VERSION=${FT_PY_VERSION}"
+fi
+cmake ${CMAKE_ARGS} ${FREE_THREADING_CMAKE} -DENABLE_PYTHON=1 -DCHDB_CROSSCOMPILING=1 -DCHDB_PYTHON_INCLUDE_DIR_PREFIX=${CHDB_PYTHON_INCLUDE_DIR_PREFIX} -DPYBIND11_NOPYTHON=ON ..
 ninja -d keeprsp || true
 
 # Delete the binary and run ninja -v again to capture the command
@@ -360,18 +387,22 @@ cd ${PROJ_DIR} && pwd
 
 ccache -s || true
 
-if ! CMAKE_ARGS="${CMAKE_ARGS}" CHDB_PYTHON_INCLUDE_DIR_PREFIX="${HOME}/python_include" bash ${DIR}/build_pybind11.sh --all --cross-compile --build-dir=${BUILD_DIR}; then
-    echo "Error: Failed to build pybind11 libraries"
-    exit 1
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    echo "Free-threading build: skipping pybind11 nonlimitedapi shim libraries (not needed)"
+else
+    if ! CMAKE_ARGS="${CMAKE_ARGS}" CHDB_PYTHON_INCLUDE_DIR_PREFIX="${HOME}/python_include" bash ${DIR}/build_pybind11.sh --all --cross-compile --build-dir=${BUILD_DIR}; then
+        echo "Error: Failed to build pybind11 libraries"
+        exit 1
+    fi
+
+    if [ ${build_type} != "Debug" ]; then
+        echo -e "\nStrip pybind11 stubs library:"
+        STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.dylib
+        [ -f ${STUBS_LIB} ] && ${STRIP} -S -x ${STUBS_LIB}
+    fi
 fi
 
-if [ ${build_type} != "Debug" ]; then
-    echo -e "\nStrip pybind11 stubs library:"
-    STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.dylib
-    [ -f ${STUBS_LIB} ] && ${STRIP} -S -x ${STUBS_LIB}
-fi
-
-# Fix LC_RPATH in _chdb.abi3.so for cross-compiled builds
+# Fix LC_RPATH in module for cross-compiled builds
 echo -e "\nFixing LC_RPATH in ${CHDB_PY_MODULE}..."
 INSTALL_NAME_TOOL="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-install_name_tool"
 OTOOL="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-otool"
@@ -379,15 +410,17 @@ OTOOL="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-otool"
 echo -e "\nPre library dependencies:"
 ${OTOOL} -L ${CHDB_DIR}/${CHDB_PY_MODULE}
 
-STUBS_LIB="libpybind11nonlimitedapi_stubs.dylib"
-OLD_STUBS_PATH=$(${OTOOL} -L ${CHDB_DIR}/${CHDB_PY_MODULE} | grep "${STUBS_LIB}" | awk '{print $1}')
-if [ -n "${OLD_STUBS_PATH}" ]; then
-    echo "Changing ${STUBS_LIB} reference:"
-    echo "  From: ${OLD_STUBS_PATH}"
-    echo "  To:   @loader_path/${STUBS_LIB}"
-    ${INSTALL_NAME_TOOL} -change "${OLD_STUBS_PATH}" "@loader_path/${STUBS_LIB}" ${CHDB_DIR}/${CHDB_PY_MODULE}
-else
-    echo "${STUBS_LIB} not found in dependencies"
+if [ "${CHDB_FREE_THREADING}" != "1" ]; then
+    STUBS_LIB="libpybind11nonlimitedapi_stubs.dylib"
+    OLD_STUBS_PATH=$(${OTOOL} -L ${CHDB_DIR}/${CHDB_PY_MODULE} | grep "${STUBS_LIB}" | awk '{print $1}')
+    if [ -n "${OLD_STUBS_PATH}" ]; then
+        echo "Changing ${STUBS_LIB} reference:"
+        echo "  From: ${OLD_STUBS_PATH}"
+        echo "  To:   @loader_path/${STUBS_LIB}"
+        ${INSTALL_NAME_TOOL} -change "${OLD_STUBS_PATH}" "@loader_path/${STUBS_LIB}" ${CHDB_DIR}/${CHDB_PY_MODULE}
+    else
+        echo "${STUBS_LIB} not found in dependencies"
+    fi
 fi
 
 echo -e "\nPost library dependencies:"

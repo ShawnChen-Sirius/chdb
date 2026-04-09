@@ -61,7 +61,7 @@ build_pybind11_nonlimitedapi() {
         custom_python_path="${force_python}"
         echo "Using explicit Python executable: ${custom_python_path}"
     elif command -v pyenv >/dev/null 2>&1; then
-        full_py_version=$(pyenv versions --bare | grep "^${py_version}\." | head -n 1)
+        full_py_version=$(pyenv versions --bare | grep "^${py_version}\." | grep -v 't$' | head -n 1)
 
         if [ -n "$full_py_version" ]; then
             custom_python_path="$HOME/.pyenv/versions/${full_py_version}/bin/python3"
@@ -155,7 +155,7 @@ build_all_pybind11_nonlimitedapi() {
         if command -v pyenv >/dev/null 2>&1; then
             for version in "${python_versions[@]}"; do
                 local pyenv_version
-                pyenv_version=$(pyenv versions --bare | grep "^${version}\." | head -1)
+                pyenv_version=$(pyenv versions --bare | grep "^${version}\." | grep -v 't$' | head -1)
                 if [ -z "$pyenv_version" ]; then
                     echo "Error: Python ${version} not found in pyenv. Please install it with: pyenv install ${version}.x"
                     exit 1

@@ -4,7 +4,22 @@ PROJ_DIR="${DIR}/.." # project root directory
 BUILD_DIR="$PROJ_DIR/buildlib" # build directory
 CHDB_DIR="$PROJ_DIR/chdb" # chdb directory
 CHDB_PY_MOD="_chdb"
-CHDB_PY_MODULE="${CHDB_PY_MOD}.abi3.so"
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    if [ "${CHDB_CROSSCOMPILING}" == "1" ]; then
+        _ft_ver=${CHDB_FREE_THREADING_PYTHON_VERSION:?requires CHDB_FREE_THREADING_PYTHON_VERSION}
+        _py_tag=${_ft_ver//./}      # 3.13t → 313t
+        EXT_SUFFIX=".cpython-${_py_tag}-darwin.so"
+    else
+        EXT_SUFFIX=$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')
+        if [ -z "$EXT_SUFFIX" ]; then
+            echo "Error: failed to get EXT_SUFFIX from free-threading Python"
+            exit 1
+        fi
+    fi
+    CHDB_PY_MODULE="${CHDB_PY_MOD}${EXT_SUFFIX}"
+else
+    CHDB_PY_MODULE="${CHDB_PY_MOD}.abi3.so"
+fi
 pushd ${PROJ_DIR} > /dev/null
 CHDB_VERSION=$(python3 -c 'import setup; print(setup.get_latest_git_tag())' 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
 popd > /dev/null
