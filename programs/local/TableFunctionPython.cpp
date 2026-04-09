@@ -36,7 +36,7 @@ namespace DB
 
 namespace Setting
 {
-extern const SettingsBool allow_python_function;
+extern const SettingsBool allow_python_table_function;
 }
 
 namespace ErrorCodes
@@ -51,9 +51,9 @@ extern const int FUNCTION_NOT_ALLOWED;
 
 void TableFunctionPython::parseArguments(const ASTPtr & ast_function, ContextPtr context)
 {
-    if (!context->getSettingsRef()[Setting::allow_python_function])
+    if (!context->getSettingsRef()[Setting::allow_python_table_function])
         throw Exception(
-            ErrorCodes::FUNCTION_NOT_ALLOWED, "Python table function is disabled, because setting 'allow_python_function' is set to 0");
+            ErrorCodes::FUNCTION_NOT_ALLOWED, "Python table function is disabled, because setting 'allow_python_table_function' is set to 0");
 
     const auto & func_args = ast_function->as<ASTFunction &>();
 
