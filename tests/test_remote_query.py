@@ -12,23 +12,20 @@ Requires:
 
 Run:
     REMOTE_HOST=host:9000 REMOTE_USER=user REMOTE_PASSWORD=pwd \
-        python -m pytest tests/test_remote_query.py -v
+        python -m unittest tests/test_remote_query.py -v
 """
 
 import os
 import unittest
 import uuid
 
-import pytest
-
 REMOTE_HOST = os.environ.get("REMOTE_HOST")
 REMOTE_USER = os.environ.get("REMOTE_USER")
 REMOTE_PASSWORD = os.environ.get("REMOTE_PASSWORD")
 
 if not all([REMOTE_HOST, REMOTE_USER, REMOTE_PASSWORD]):
-    pytest.skip(
-        "Skipping remote query tests: REMOTE_HOST, REMOTE_USER, and REMOTE_PASSWORD must be set",
-        allow_module_level=True,
+    raise unittest.SkipTest(
+        "Skipping remote query tests: REMOTE_HOST, REMOTE_USER, and REMOTE_PASSWORD must be set"
     )
 
 import chdb
