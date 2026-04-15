@@ -2,6 +2,7 @@
 
 #include <Storages/getStructureOfRemoteTable.h>
 #include <Storages/StorageDistributed.h>
+#include <Storages/StorageValues.h>
 #include <Storages/checkAndGetLiteralArgument.h>
 #include <Storages/NamedCollectionsHelpers.h>
 #include <Storages/Distributed/DistributedSettings.h>
@@ -11,8 +12,14 @@
 #include <Parsers/ASTExpressionList.h>
 #include <Interpreters/evaluateConstantExpression.h>
 #include <Interpreters/Cluster.h>
+#include <Interpreters/ClusterProxy/executeQuery.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/IdentifierSemantic.h>
+#include <QueryPipeline/RemoteQueryExecutor.h>
+#include <Columns/ColumnString.h>
+#include <Columns/ColumnsNumber.h>
+#include <DataTypes/DataTypeString.h>
+#include <DataTypes/DataTypesNumber.h>
 #include <Common/typeid_cast.h>
 #include <Common/parseRemoteDescription.h>
 #include <Common/Macros.h>
@@ -64,32 +71,45 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
     std::vector<std::pair<std::string, ASTPtr>> complex_args;
     if (!is_cluster_function && (named_collection = tryGetNamedCollectionWithOverrides(args, context, false, &complex_args)))
     {
-        validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(
-            *named_collection,
-            {"addresses_expr", "host", "hostname", "table"},
-            {"username", "user", "password", "sharding_key", "port", "database", "db"});
-
-        if (!complex_args.empty())
+        if (named_collection->has("query"))
         {
-            for (const auto & [arg_name, arg_ast] : complex_args)
-            {
-                if (arg_name == "database" || arg_name == "db")
-                    remote_table_function_ptr = arg_ast;
-                else if (arg_name == "sharding_key")
-                    sharding_key = arg_ast;
-                else
-                    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected argument representation for {}", arg_name);
-            }
+            validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(
+                *named_collection,
+                {"addresses_expr", "host", "hostname"},
+                {"username", "user", "password", "port", "query"});
+
+            remote_query = named_collection->get<String>("query");
         }
         else
-            database = named_collection->getAnyOrDefault<String>({"db", "database"}, "default");
+        {
+            validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(
+                *named_collection,
+                {"addresses_expr", "host", "hostname", "table"},
+                {"username", "user", "password", "sharding_key", "port", "database", "db"});
+
+            if (!complex_args.empty())
+            {
+                for (const auto & [arg_name, arg_ast] : complex_args)
+                {
+                    if (arg_name == "database" || arg_name == "db")
+                        remote_table_function_ptr = arg_ast;
+                    else if (arg_name == "sharding_key")
+                        sharding_key = arg_ast;
+                    else
+                        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected argument representation for {}", arg_name);
+                }
+            }
+            else
+                database = named_collection->getAnyOrDefault<String>({"db", "database"}, "default");
+
+            table = named_collection->get<String>("table");
+        }
 
         cluster_description = named_collection->getOrDefault<String>("addresses_expr", "");
         if (cluster_description.empty() && named_collection->hasAny({"host", "hostname"}))
             cluster_description = named_collection->has("port")
                 ? named_collection->getAny<String>({"host", "hostname"}) + ':' + toString(named_collection->get<UInt64>("port"))
                 : named_collection->getAny<String>({"host", "hostname"});
-        table = named_collection->get<String>("table");
         username = named_collection->getAnyOrDefault<String>({"username", "user"}, "default");
         password = named_collection->getOrDefault<String>("password", "");
     }
@@ -110,6 +130,11 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
         /// remote('addresses_expr', db.table, 'user', 'password', sharding_key)
         /// remote('addresses_expr', 'db', 'table', 'user', 'password', sharding_key)
         ///
+        /// DDL / arbitrary query execution:
+        /// remote('addresses_expr', query = 'DDL or any SQL')
+        /// remote('addresses_expr', query = 'DDL or any SQL', 'user')
+        /// remote('addresses_expr', query = 'DDL or any SQL', 'user', 'password')
+        ///
         /// remoteSecure() - same as remote()
         ///
         /// cluster()
@@ -120,6 +145,30 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
         /// cluster('cluster_name', 'db', 'table', sharding_key)
         ///
         /// clusterAllReplicas() - same as cluster()
+
+        /// Extract query = '...' keyword argument if present (for DDL / arbitrary query mode).
+        if (!is_cluster_function)
+        {
+            for (auto it = args.begin(); it != args.end(); ++it)
+            {
+                const auto * func = (*it)->as<ASTFunction>();
+                if (func && func->name == "equals")
+                {
+                    const auto * func_args = func->arguments->as<ASTExpressionList>();
+                    if (func_args && func_args->children.size() == 2)
+                    {
+                        String key;
+                        if (tryGetIdentifierNameInto(func_args->children[0], key) && key == "query")
+                        {
+                            auto literal = evaluateConstantExpressionOrIdentifierAsLiteral(func_args->children[1], context);
+                            remote_query = checkAndGetLiteralArgument<String>(literal, "query");
+                            args.erase(it);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         if ((!is_cluster_function && args.empty()) || args.size() > max_args)
             throw Exception(help_message, ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
@@ -161,50 +210,84 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
 
         ++arg_num;
 
-        /// Names of database and table is not necessary.
-        if (arg_num < args.size())
+        /// When query parameter is set, skip db/table parsing — remaining args are [user [, password]].
+        if (!remote_query.empty())
         {
-            const auto * function = args[arg_num]->as<ASTFunction>();
-            if (function && TableFunctionFactory::instance().isTableFunctionName(function->name))
+            if (!is_cluster_function)
             {
-                remote_table_function_ptr = args[arg_num];
-                ++arg_num;
-            }
-            else
-            {
-                args[arg_num] = evaluateConstantExpressionForDatabaseName(args[arg_num], context);
-                database = checkAndGetLiteralArgument<String>(args[arg_num], "database");
-
-                ++arg_num;
-
-                auto qualified_name = QualifiedTableName::parseFromString(database);
-                if (qualified_name.database.empty())
+                if (arg_num < args.size())
                 {
-                    if (arg_num >= args.size())
+                    String user_candidate;
+                    if (get_string_literal(*args[arg_num], user_candidate))
                     {
-                        throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Table name was not found in function arguments. {}", static_cast<const std::string>(help_message));
+                        username = user_candidate;
+                        ++arg_num;
                     }
-
-                    std::swap(qualified_name.database, qualified_name.table);
-                    args[arg_num] = evaluateConstantExpressionOrIdentifierAsLiteral(args[arg_num], context);
-                    qualified_name.table = checkAndGetLiteralArgument<String>(args[arg_num], "table");
-                    ++arg_num;
                 }
 
-                database = std::move(qualified_name.database);
-                table = std::move(qualified_name.table);
-
-                /// Cluster function may have sharding key for insert
-                if (is_cluster_function && arg_num < args.size())
+                if (arg_num < args.size())
                 {
-                    sharding_key = args[arg_num];
+                    String pass_candidate;
+                    if (get_string_literal(*args[arg_num], pass_candidate))
+                    {
+                        password = pass_candidate;
+                        ++arg_num;
+                    }
+                }
+            }
+
+            if (arg_num < args.size())
+                throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                    "Too many arguments for remote() with query parameter. "
+                    "Expected: remote('host', query = 'SQL' [, 'user' [, 'password']])");
+        }
+        else
+        {
+            /// Names of database and table is not necessary.
+            if (arg_num < args.size())
+            {
+                const auto * function = args[arg_num]->as<ASTFunction>();
+                if (function && TableFunctionFactory::instance().isTableFunctionName(function->name))
+                {
+                    remote_table_function_ptr = args[arg_num];
                     ++arg_num;
+                }
+                else
+                {
+                    args[arg_num] = evaluateConstantExpressionForDatabaseName(args[arg_num], context);
+                    database = checkAndGetLiteralArgument<String>(args[arg_num], "database");
+
+                    ++arg_num;
+
+                    auto qualified_name = QualifiedTableName::parseFromString(database);
+                    if (qualified_name.database.empty())
+                    {
+                        if (arg_num >= args.size())
+                        {
+                            throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Table name was not found in function arguments. {}", static_cast<const std::string>(help_message));
+                        }
+
+                        std::swap(qualified_name.database, qualified_name.table);
+                        args[arg_num] = evaluateConstantExpressionOrIdentifierAsLiteral(args[arg_num], context);
+                        qualified_name.table = checkAndGetLiteralArgument<String>(args[arg_num], "table");
+                        ++arg_num;
+                    }
+
+                    database = std::move(qualified_name.database);
+                    table = std::move(qualified_name.table);
+
+                    /// Cluster function may have sharding key for insert
+                    if (is_cluster_function && arg_num < args.size())
+                    {
+                        sharding_key = args[arg_num];
+                        ++arg_num;
+                    }
                 }
             }
         }
 
         /// Username and password parameters are prohibited in cluster version of the function
-        if (!is_cluster_function)
+        if (!is_cluster_function && remote_query.empty())
         {
             if (arg_num < args.size())
             {
@@ -301,7 +384,7 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
         cluster = std::make_shared<Cluster>(context->getSettingsRef(), names, params);
     }
 
-    if (!remote_table_function_ptr && table.empty())
+    if (remote_query.empty() && !remote_table_function_ptr && table.empty())
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "The name of remote table cannot be empty");
 
     remote_table_id.database_name = database;
@@ -310,12 +393,72 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
 
 StoragePtr TableFunctionRemote::executeImpl(const ASTPtr & /*ast_function*/, ContextPtr context, const std::string & table_name, ColumnsDescription cached_columns, bool is_insert_query) const
 {
+    assert(cluster);
+
+    /// DDL / arbitrary query execution mode.
+    if (!remote_query.empty())
+    {
+        auto type_uint32 = std::make_shared<DataTypeUInt32>();
+        auto type_string = std::make_shared<DataTypeString>();
+
+        auto col_shard = ColumnUInt32::create();
+        auto col_host = ColumnString::create();
+        auto col_status = ColumnString::create();
+
+        const auto & shards_info = cluster->getShardsInfo();
+        const auto & addresses_with_failover = cluster->getShardsAddresses();
+
+        for (size_t shard_index = 0; shard_index < shards_info.size(); ++shard_index)
+        {
+            const auto & shard_info = shards_info[shard_index];
+
+            auto new_context = ClusterProxy::updateSettingsForCluster(
+                *cluster, context, context->getSettingsRef(), remote_table_id);
+            auto empty_header = std::make_shared<const Block>(Block{});
+
+            RemoteQueryExecutor executor(shard_info.pool, remote_query, empty_header, new_context);
+            executor.setPoolMode(PoolMode::GET_ONE);
+
+            while (true)
+            {
+                Block block = executor.readBlock();
+                if (block.rows() == 0)
+                    break;
+            }
+            executor.finish();
+
+            String host_name;
+            if (shard_index < addresses_with_failover.size() && !addresses_with_failover[shard_index].empty())
+                host_name = addresses_with_failover[shard_index].front().host_name
+                    + ":" + toString(addresses_with_failover[shard_index].front().port);
+            else
+                host_name = "localhost";
+
+            col_shard->insert(shard_info.shard_num);
+            col_host->insert(host_name);
+            col_status->insert(String("OK"));
+        }
+
+        Block result_block;
+        result_block.insert({std::move(col_shard), type_uint32, "shard_num"});
+        result_block.insert({std::move(col_host), type_string, "host"});
+        result_block.insert({std::move(col_status), type_string, "status"});
+
+        ColumnsDescription result_columns;
+        result_columns.add(ColumnDescription("shard_num", type_uint32));
+        result_columns.add(ColumnDescription("host", type_string));
+        result_columns.add(ColumnDescription("status", type_string));
+
+        return std::make_shared<StorageValues>(
+            StorageID(getDatabaseName(), table_name),
+            result_columns,
+            std::move(result_block));
+    }
+
     /// StorageDistributed supports mismatching structure of remote table, so we can use outdated structure for CREATE ... AS remote(...)
     /// without additional conversion in StorageTableFunctionProxy
     if (cached_columns.empty())
         cached_columns = getActualTableStructure(context, is_insert_query);
-
-    assert(cluster);
 
     bool has_local_shard = false;
     for (const auto & shard_info : cluster->getShardsInfo())
@@ -357,6 +500,16 @@ StoragePtr TableFunctionRemote::executeImpl(const ASTPtr & /*ast_function*/, Con
 ColumnsDescription TableFunctionRemote::getActualTableStructure(ContextPtr context, bool /*is_insert_query*/) const
 {
     assert(cluster);
+
+    if (!remote_query.empty())
+    {
+        ColumnsDescription result_columns;
+        result_columns.add(ColumnDescription("shard_num", std::make_shared<DataTypeUInt32>()));
+        result_columns.add(ColumnDescription("host", std::make_shared<DataTypeString>()));
+        result_columns.add(ColumnDescription("status", std::make_shared<DataTypeString>()));
+        return result_columns;
+    }
+
     return getStructureOfRemoteTable(*cluster, remote_table_id, context, remote_table_function_ptr);
 }
 
