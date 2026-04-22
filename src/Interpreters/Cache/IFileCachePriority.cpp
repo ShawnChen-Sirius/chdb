@@ -1,4 +1,5 @@
 #include <Interpreters/Cache/IFileCachePriority.h>
+#include <Interpreters/Cache/EvictionCandidates.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/Exception.h>
 
@@ -21,11 +22,13 @@ IFileCachePriority::Entry::Entry(
     const Key & key_,
     size_t offset_,
     size_t size_,
-    KeyMetadataPtr key_metadata_)
+    KeyMetadataPtr key_metadata_,
+    State initial_state)
     : key(key_)
     , offset(offset_)
     , key_metadata(key_metadata_)
     , size(size_)
+    , state(initial_state)
 {
 }
 

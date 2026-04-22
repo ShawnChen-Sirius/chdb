@@ -51,13 +51,25 @@ if [ -z "$STRIP" ]; then
 fi
 
 echo "STRIP command: $STRIP"
-echo "STRIP location: $(which $STRIP 2>/dev/null || echo 'not found')"
+if [ -n "${STRIP}" ]; then
+    echo "STRIP location: $(command -v "${STRIP}" 2>/dev/null || echo 'not found')"
+else
+    echo "STRIP location: not found"
+fi
 
 # check current os type, and make ldd command
 if [ "$(uname)" == "Darwin" ]; then
     LDD="otool -L"
-    AR="llvm-ar"
-    NM="llvm-nm"
+    if command -v llvm-ar >/dev/null 2>&1; then
+        AR="llvm-ar"
+    else
+        AR="ar"
+    fi
+    if command -v llvm-nm >/dev/null 2>&1; then
+        NM="llvm-nm"
+    else
+        NM="nm"
+    fi
 elif [ "$(uname)" == "Linux" ]; then
     LDD="ldd"
     AR="ar"

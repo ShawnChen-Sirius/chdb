@@ -3,6 +3,7 @@
 #include "ArrowStreamWrapper.h"
 #include "StorageArrowStream.h"
 
+#include <Common/FunctionDocumentation.h>
 #include <TableFunctions/TableFunctionFactory.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTLiteral.h>
@@ -112,15 +113,16 @@ ColumnsDescription TableFunctionArrowStream::getActualTableStructure(
 void registerTableFunctionArrowStream(TableFunctionFactory & factory)
 {
     factory.registerFunction<TableFunctionArrowStream>(
-        {.documentation = {
+        {
             .description = R"(
 Creates a table from a registered ArrowStream.
 This table function requires a single argument which is the name of a registered ArrowStream.
 Use chdb_arrow_register_table() to register ArrowStreams first.
 )",
             .examples = {{"arrowstream", "SELECT * FROM arrowstream('my_data')", ""}},
-            .category = FunctionDocumentation::Category::TableFunction
-        }},
+            .category = FunctionDocumentation::Category::TableFunction,
+        },
+        {},
         TableFunctionFactory::Case::Insensitive);
 }
 

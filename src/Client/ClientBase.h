@@ -563,7 +563,7 @@ public:
     } profile_events;
 
     QueryProcessingStage::Enum query_processing_stage;
-    ClientInfo::QueryKind query_kind;
+    ClientInfo::QueryKind query_kind{ClientInfo::QueryKind::INITIAL_QUERY};
 
     struct HostAndPort
     {

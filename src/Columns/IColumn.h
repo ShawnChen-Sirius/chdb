@@ -7,7 +7,6 @@
 #include <Common/PODArray_fwd.h>
 #include <Common/typeid_cast.h>
 
-#include <IO/WriteBufferFromString.h>
 #include "config.h"
 
 #include <span>
@@ -38,6 +37,7 @@ struct ColumnsInfo;
 using DataTypePtr = std::shared_ptr<const IDataType>;
 using IColumnPermutation = PaddedPODArray<size_t>;
 using IColumnFilter = PaddedPODArray<UInt8>;
+class WriteBufferFromOwnString;
 
 /// A range of column values between row indexes `from` and `to`. The name "equal range" is due to table sorting as its main use case: With
 /// a PRIMARY KEY (c_pk1, c_pk2, ...), the first PK column is fully sorted. The second PK column is sorted within equal-value runs of the
@@ -89,6 +89,10 @@ struct ColumnsWithRowNumbers
     std::vector<UInt32, AllocatorWithMemoryTracking<UInt32>> row_numbers;
 };
 
+/// Helper throw functions so Column headers don't need to include Exception.h.
+[[noreturn]] void throwCannotPopBack(size_t n, const std::string & column_name, size_t column_size);
+[[noreturn]] void throwColumnConvertNotSupported(std::string_view type_name, const char * as_type);
+
 /// Declares interface to store columns in memory.
 class IColumn : public COW<IColumn>
 {
@@ -130,7 +134,32 @@ public:
 
     [[nodiscard]] virtual Ptr convertToFullIfNeeded() const
     {
-        return convertToFullColumnIfConst()->convertToFullColumnIfReplicated()->convertToFullColumnIfSparse()->convertToFullColumnIfLowCardinality();
+        Ptr converted = convertToFullColumnIfConst()
+            ->convertToFullColumnIfReplicated()
+            ->convertToFullColumnIfSparse()
+            ->convertToFullColumnIfLowCardinality();
+
+        Columns new_subcolumns;
+        bool any_changed = false;
+
+        converted->forEachSubcolumn([&](const WrappedPtr & subcolumn)
+        {
+            auto new_sub = subcolumn->convertToFullIfNeeded();
+            any_changed |= (new_sub.get() != subcolumn.get());
+            new_subcolumns.push_back(std::move(new_sub));
+        });
+
+        if (!any_changed)
+            return converted;
+
+        auto mutable_column = IColumn::mutate(std::move(converted));
+        size_t i = 0;
+        mutable_column->forEachMutableSubcolumn([&](WrappedPtr & subcolumn)
+        {
+            subcolumn = std::move(new_subcolumns[i++]);
+        });
+
+        return std::move(mutable_column);
     }
 
     /// Creates empty column with the same type.
@@ -157,15 +186,11 @@ public:
     struct Options
     {
         Int64 optimize_const_name_size = -1;
-
-        bool notFull(WriteBufferFromOwnString & buf) const
-        {
-            return optimize_const_name_size < 0 || static_cast<Int64>(buf.count()) <= optimize_const_name_size;
-        }
+        bool notFull(WriteBufferFromOwnString & buf) const;
     };
 
-    virtual DataTypePtr getValueNameAndTypeImpl(WriteBufferFromOwnString &, size_t, const Options &) const = 0;
-    std::pair<String, DataTypePtr> getValueNameAndType(size_t n, const Options & options) const;
+    virtual void getValueNameImpl(WriteBufferFromOwnString &, size_t, const Options &) const = 0;
+    String getValueName(size_t n, const Options & options) const;
 
     /// If possible, returns pointer to memory chunk which contains n-th element (if it isn't possible, throws an exception)
     /// Is used to optimize some computations (in aggregation, for example).
@@ -350,6 +375,14 @@ public:
     ///  passed bytes to hash must identify sequence of values unambiguously.
     virtual void updateHashWithValue(size_t n, SipHash & hash) const = 0;
 
+    /// Update state of hash function with values in range [begin, end).
+    /// Used for deduplication: the hash must be the same for the same INSERT data producing
+    /// the same in-memory representation. It does NOT guarantee the same hash for logically
+    /// equivalent data stored differently in memory (e.g. different dynamic/shared path layout
+    /// in ColumnObject, or different variant layout in ColumnDynamic).
+    /// Default implementation calls updateHashWithValue for each element.
+    virtual void updateHashWithValueRange(size_t begin, size_t end, SipHash & hash) const;
+
     /// Get hash function value. Hash is calculated for each element.
     /// It's a fast weak hash function. Mainly need to scatter data between threads.
     /// WeakHash32 must have the same size as column.
@@ -408,6 +441,15 @@ public:
         return doCompareAt(n, m, rhs, nan_direction_hint);
     }
 #endif
+
+    /** Compares and returns inequal track. It extends compareAt() to return how many values are not equal.
+      * Returns -N if current N left values are less then the right comparing value.
+      * Returns N if current N right values are less then the left comparing value.
+      * Returns 0 if current left and right values are equal.
+      *
+      * The main reason for the function is compareAt() devirtualization.
+      */
+    [[nodiscard]] virtual Int64 compareTrackAt(size_t n, size_t m, const IColumn & rhs, int nan_direction_hint) const;
 
 #if USE_EMBEDDED_COMPILER
 
@@ -510,13 +552,13 @@ public:
     /// TODO: interface decoupled from ColumnGathererStream that allows non-generic specializations.
     virtual void gather(ColumnGathererStream & gatherer_stream) = 0;
 
-    /** Computes minimum and maximum element of the column.
+    /** Computes minimum and maximum element of the column in the range [start, end).
       * In addition to numeric types, the function is completely implemented for Date and DateTime.
       * For strings and arrays function should return default value.
       *  (except for constant columns; they should return value of the constant).
-      * If column is empty function should return default value.
+      * If the range is empty the function should return default value.
       */
-    virtual void getExtremes(Field & min, Field & max) const = 0;
+    virtual void getExtremes(Field & min, Field & max, size_t start, size_t end) const = 0;
 
     /// Reserves memory for specified amount of elements. If reservation isn't possible, does nothing.
     /// It affects performance only (not correctness).
@@ -685,17 +727,24 @@ public:
         return res;
     }
 
-    /// Checks if column has dynamic subcolumns.
+    /// Checks if column has dynamic internal structure (like JSON or Dynamic).
     virtual bool hasDynamicStructure() const { return false; }
 
-    /// For columns with dynamic subcolumns checks if columns have equal dynamic structure.
+    /// For columns with dynamic structure checks if columns have equal dynamic structure.
     [[nodiscard]] virtual bool dynamicStructureEquals(const IColumn & rhs) const { return structureEquals(rhs); }
-    /// For columns with dynamic subcolumns this method takes dynamic structure from source columns
-    /// and creates proper resulting dynamic structure in advance for merge of these source columns.
-    virtual void takeDynamicStructureFromSourceColumns(const std::vector<Ptr> & /*source_columns*/, std::optional<size_t> /*max_dynamic_subcolumns*/) {}
-    /// For columns with dynamic subcolumns this method takes the exact dynamic structure from provided column.
-    virtual void takeDynamicStructureFromColumn(const ColumnPtr & /*source_column*/) {}
-    /// For columns with dynamic subcolumns fix current dynamic structure so later inserts into this column won't change it.
+
+    /// Copies the exact dynamic structure from a single source column.
+    /// Used when we need to match an existing column's structure precisely
+    /// (e.g. taking structure from the first block during write, or during deserialization).
+    virtual void takeExactDynamicStructureFrom(const IColumn & /*source*/) {}
+
+    /// Determines the optimal dynamic structure for a merge by analyzing all source columns.
+    /// May read source statistics to make structure decisions (e.g. which paths/variants to keep).
+    /// Unlike `takeExactDynamicStructureFrom`, this method actively selects the best structure.
+    /// Does NOT update statistics in the result — use `takeOrCalculateStatisticsFrom` for that.
+    virtual void chooseDynamicStructureForMerge(const Columns & /*source_columns*/, std::optional<size_t> /*max_dynamic_subcolumns*/) {}
+
+    /// For columns with dynamic structure fix current dynamic structure so later inserts into this column won't change it.
     virtual void fixDynamicStructure() {}
 
     /** Some columns can contain another columns inside.
@@ -775,6 +824,13 @@ public:
     /** Print column name, size, and recursively print all subcolumns.
       */
     [[nodiscard]] String dumpStructure() const;
+
+    virtual bool hasStatistics() const { return false; }
+
+    /// Merges/takes statistics from source columns. For multiple sources, computes merged statistics.
+    /// For ColumnObject/ColumnDynamic, must be called AFTER `chooseDynamicStructureForMerge` or `takeExactDynamicStructureFrom`,
+    /// because statistics placement depends on the dynamic structure (e.g. which paths are dynamic vs shared).
+    virtual void takeOrCalculateStatisticsFrom(const Columns & /*source_columns*/) {}
 
 protected:
     template <typename Compare, typename Sort, typename PartialSort>
