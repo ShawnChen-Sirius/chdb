@@ -18,11 +18,20 @@ import pyarrow as pa
 import chdb
 
 
-def _query_arrow(sql: str, parallel: bool, fmt: str = "Arrow", threads: int = 4) -> pa.Table:
+def _query_arrow(
+    sql: str,
+    parallel: bool,
+    fmt: str = "Arrow",
+    threads: int = 4,
+    block_size: int = 4096,
+    extra_settings: str = "",
+) -> pa.Table:
     full = (
-        f"{sql} SETTINGS max_threads = {threads}, max_block_size = 4096, "
+        f"{sql} SETTINGS max_threads = {threads}, max_block_size = {block_size}, "
         f"output_format_arrow_parallel_encoding = {1 if parallel else 0}"
     )
+    if extra_settings:
+        full += ", " + extra_settings
     data = chdb.query(full, fmt).bytes()
     buf = io.BytesIO(data)
     if fmt == "Arrow":
@@ -33,16 +42,24 @@ def _query_arrow(sql: str, parallel: bool, fmt: str = "Arrow", threads: int = 4)
 
 
 class TestArrowParallelEncoding(unittest.TestCase):
-    def _assert_parallel_matches_serial(self, sql: str, fmt: str = "Arrow", threads: int = 4):
-        serial = _query_arrow(sql, parallel=False, fmt=fmt, threads=threads)
-        parallel = _query_arrow(sql, parallel=True, fmt=fmt, threads=threads)
+    def _assert_parallel_matches_serial(
+        self,
+        sql: str,
+        fmt: str = "Arrow",
+        threads: int = 4,
+        block_size: int = 4096,
+        extra_settings: str = "",
+    ):
+        kwargs = dict(fmt=fmt, threads=threads, block_size=block_size, extra_settings=extra_settings)
+        serial = _query_arrow(sql, parallel=False, **kwargs)
+        parallel = _query_arrow(sql, parallel=True, **kwargs)
         self.assertEqual(serial.column_names, parallel.column_names)
         self.assertEqual(serial.num_rows, parallel.num_rows)
         # Strict equality across the entire table - this catches both data
         # corruption and reordering caused by parallel workers.
         self.assertTrue(
             serial.equals(parallel),
-            msg=f"parallel Arrow output differs from serial for: {sql}",
+            msg=f"parallel Arrow output differs from serial for: {sql} ({extra_settings})",
         )
         return serial
 
@@ -165,6 +182,105 @@ class TestArrowParallelEncoding(unittest.TestCase):
         serial = _query_arrow(sql, parallel=False, threads=1)
         parallel = _query_arrow(sql, parallel=True, threads=1)
         self.assertTrue(serial.equals(parallel))
+
+    # --- Compression codecs (writer runs on main thread) -------------------
+
+    def test_all_compression_codecs_match_serial(self):
+        sql = (
+            "SELECT number AS n, toString(number) AS s, "
+            "toFloat64(number) / 7 AS f FROM numbers(20000)"
+        )
+        for codec in ("none", "lz4_frame", "zstd"):
+            with self.subTest(codec=codec):
+                self._assert_parallel_matches_serial(
+                    sql,
+                    extra_settings=f"output_format_arrow_compression_method = '{codec}'",
+                )
+
+    # --- Extended type coverage --------------------------------------------
+
+    def test_datetime_and_date_types_match_serial(self):
+        sql = (
+            "SELECT number AS k, "
+            "toDate('2024-01-01') + toIntervalDay(number % 365) AS d, "
+            "toDateTime('2024-01-01 00:00:00') + toIntervalSecond(number) AS dt, "
+            "toDateTime64('2024-01-01 00:00:00.000', 3) "
+            "  + toIntervalMillisecond(number * 7) AS dt64 "
+            "FROM numbers(20000)"
+        )
+        tbl = self._assert_parallel_matches_serial(sql)
+        self.assertEqual(tbl.num_rows, 20000)
+
+    def test_decimal_types_match_serial(self):
+        sql = (
+            "SELECT number AS k, "
+            "toDecimal32(number / 100, 4) AS d32, "
+            "toDecimal64(number * 1.5, 6) AS d64, "
+            "toDecimal128(number, 10) AS d128 "
+            "FROM numbers(20000)"
+        )
+        tbl = self._assert_parallel_matches_serial(sql)
+        self.assertEqual(tbl.num_rows, 20000)
+
+    def test_fixed_string_match_serial(self):
+        sql = (
+            "SELECT number AS k, "
+            "toFixedString(leftPad(toString(number), 8, '0'), 8) AS fs "
+            "FROM numbers(20000)"
+        )
+        for as_fixed in (0, 1):
+            with self.subTest(as_fixed=as_fixed):
+                self._assert_parallel_matches_serial(
+                    sql,
+                    extra_settings=f"output_format_arrow_fixed_string_as_fixed_byte_array = {as_fixed}",
+                )
+
+    def test_map_type_match_serial(self):
+        sql = (
+            "SELECT number AS k, "
+            "map('a', number, 'b', number + 1) AS m, "
+            "map(toString(number % 4), arrayMap(x -> x * 2, range(toUInt32(number % 5)))) AS m2 "
+            "FROM numbers(20000)"
+        )
+        self._assert_parallel_matches_serial(sql)
+
+    # --- Backpressure path (in-flight cap = 4 * max_threads) ---------------
+
+    def test_backpressure_with_many_small_chunks(self):
+        # max_threads=2 → backpressure cap = 8 in-flight tasks.
+        # 200 chunks of 1024 rows each greatly exceeds the cap, forcing
+        # the producer to wait on the condition variable repeatedly.
+        sql = "SELECT number AS n, toString(number) AS s FROM numbers(204800)"
+        tbl = self._assert_parallel_matches_serial(sql, threads=2, block_size=1024)
+        self.assertEqual(tbl.column("n").to_pylist()[:5], [0, 1, 2, 3, 4])
+        self.assertEqual(tbl.column("n").to_pylist()[-5:], [204795, 204796, 204797, 204798, 204799])
+
+    # --- Concurrent queries (per-instance ThreadPool lifecycle) ------------
+
+    def test_concurrent_queries_share_no_state(self):
+        # Each query owns its own ArrowBlockOutputFormat (and its own
+        # ThreadPool). Running many in parallel exercises pool create/destroy,
+        # ThreadGroupSwitcher state, and CurrentMetrics counters.
+        from concurrent.futures import ThreadPoolExecutor
+
+        sqls = [
+            f"SELECT number AS n, toString(number * {i}) AS s FROM numbers(30000)"
+            for i in range(1, 9)
+        ]
+
+        def run(sql_with_i):
+            i, sql = sql_with_i
+            tbl = _query_arrow(sql, parallel=True)
+            return i, tbl
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            results = list(ex.map(run, enumerate(sqls)))
+
+        for i, tbl in results:
+            self.assertEqual(tbl.num_rows, 30000)
+            # Cross-check value at row 12345 was multiplied by the right i.
+            expected = str(12345 * (i + 1))
+            self.assertEqual(tbl.column("s")[12345].as_py(), expected)
 
 
 if __name__ == "__main__":
