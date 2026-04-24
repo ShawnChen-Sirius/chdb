@@ -59,12 +59,10 @@ namespace Coordination
 
 struct OvercommitTracker;
 
-#if defined(USE_PYTHON) && USE_PYTHON
 namespace CHDB
 {
 class PythonTableCache;
 }
-#endif
 
 namespace DB
 {
@@ -390,10 +388,6 @@ protected:
     mutable bool need_recalculate_access = true;
     String current_database;
     std::unique_ptr<Settings> settings{};  /// Setting for query execution.
-#if defined(USE_PYTHON) && USE_PYTHON
-    bool is_json_supported = true;
-    std::shared_ptr<CHDB::PythonTableCache> py_table_cache;
-#endif
 
     using ProgressCallback = std::function<void(const Progress & progress)>;
     ProgressCallback progress_callback;  /// Callback for tracking progress of query execution.
@@ -714,6 +708,14 @@ protected:
     mutable std::mutex mutex_shared_context;    /// mutex to avoid accessing destroyed shared context pointer
                                                 /// some Context methods can be called after the shared context is destroyed
                                                 /// example, Context::handleCrash() method - called from signal handler
+
+    /// Always present: sizeof(ContextData) must be identical in USE_PYTHON=0 and USE_PYTHON=1
+    /// builds because src/ and programs/local/ compile with different flags.  A sizeof difference
+    /// causes wrong offsets for any member after this point (e.g. mutex_shared_context moved here
+    /// would cause pthread_mutex_lock(0x0)).  bool and shared_ptr<forward-decl> are safe without
+    /// Python headers; null shared_ptr destruction never dereferences the pointed-to type.
+    bool is_json_supported = true;
+    std::shared_ptr<CHDB::PythonTableCache> py_table_cache;
 };
 
 /** A set of known objects that can be used in the query.

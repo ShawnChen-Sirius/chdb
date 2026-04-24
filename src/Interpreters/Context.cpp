@@ -3694,7 +3694,6 @@ const IUserDefinedSQLObjectsStorage & Context::getUserDefinedSQLObjectsStorage()
     {
         shared->user_defined_sql_objects_storage->setPath(udf_path);
     }
-    shared->user_defined_sql_objects_storage->setPath(udf_path);
 
     return *shared->user_defined_sql_objects_storage;
 }

@@ -263,6 +263,8 @@ libchdb.so
 /examples/ml-25m
 .clickhouse/
 
+.chdb-build-bin/
+
 # Large test data files
 data.csv
 organizations-500000.*

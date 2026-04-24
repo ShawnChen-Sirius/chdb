@@ -111,6 +111,14 @@ if (USE_PYTHON)
         ${PYBIND11_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(clickhouse-local-lib SYSTEM PRIVATE ${PYTHON_INCLUDE_DIR})
+    # Python headers on Ubuntu/Debian use a multiarch layout: pyconfig.h includes
+    # <x86_64-linux-gnu/python3.X/pyconfig.h>.  We symlink that into the sysroot so the
+    # cross-compiler can find it without reaching into host /usr/include.
+    # Suppress -Wpoison-system-directories for these targets since the Python headers
+    # are intentionally pulled from the host (they are header-only, ABI-neutral).
+    if (OS_LINUX)
+        target_compile_options(clickhouse-local-lib PRIVATE -Wno-poison-system-directories)
+    endif()
 endif()
 
 if (TARGET ch_rust::skim)

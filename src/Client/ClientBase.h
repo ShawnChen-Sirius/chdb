@@ -460,12 +460,6 @@ public:
     std::shared_ptr<WriteBuffer> query_result_buf;
     std::shared_ptr<StreamingQueryContext> streaming_query_context;
 
-#if USE_PYTHON
-    /// Collected chunks for DataFrame generation
-    std::vector<Chunk> collected_chunks;
-    SharedHeader collected_chunks_header;
-#endif
-
     /// The user can specify to redirect query output to a file.
     std::unique_ptr<WriteBuffer> out_file_buf;
     std::shared_ptr<IOutputFormat> output_format;
@@ -584,6 +578,12 @@ public:
     std::ostream & output_stream;
     std::ostream & error_stream;
 
+    /// Always present to guarantee sizeof(ClientBase) is identical in USE_PYTHON=0 and USE_PYTHON=1
+    /// builds. src/Client/ is compiled without USE_PYTHON=1 while programs/local/ is compiled with it;
+    /// a sizeof difference causes vtable thunk offsets in ClientApplicationBase to disagree → SIGSEGV.
+    /// Chunk and SharedHeader are core types available in all builds.
+    std::vector<Chunk> collected_chunks;
+    SharedHeader collected_chunks_header;
 };
 
 }

@@ -42,12 +42,12 @@ if [ -z "$STRIP" ]; then
     STRIP=$(ls -1 /opt/homebrew/opt/llvm@*/bin/llvm-strip* 2>/dev/null | sort -V | tail -n 1)
 fi
 
-# if none of them are found, use llvm-strip or strip
+# if none of them are found, use llvm-strip or strip (which may fail; keep set -e safe)
 if [ -z "$STRIP" ]; then
-    STRIP=$(which llvm-strip 2>/dev/null)
+    STRIP=$(command -v llvm-strip 2>/dev/null || true)
 fi
 if [ -z "$STRIP" ]; then
-    STRIP=$(which strip 2>/dev/null)
+    STRIP=$(command -v strip 2>/dev/null || true)
 fi
 
 echo "STRIP command: $STRIP"

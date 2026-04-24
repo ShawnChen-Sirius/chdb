@@ -134,6 +134,9 @@ set (SRCS
     "${LIBRARY_DIR}/src/tsd.c"
     "${LIBRARY_DIR}/src/util.c"
     "${LIBRARY_DIR}/src/witness.c"
+    # chdb extension: je_vsallocx (safe size lookup for foreign pointers).
+    # Kept outside contrib/jemalloc so the upstream submodule stays pristine.
+    "${CMAKE_CURRENT_SOURCE_DIR}/je_vsallocx.c"
 )
 if (OS_DARWIN)
     list(APPEND SRCS "${LIBRARY_DIR}/src/zone.c")

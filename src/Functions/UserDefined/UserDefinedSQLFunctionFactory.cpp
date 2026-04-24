@@ -122,7 +122,28 @@ UserDefinedSQLFunctionFactory & UserDefinedSQLFunctionFactory::instance()
 
 UserDefinedSQLFunctionFactory::UserDefinedSQLFunctionFactory()
     : global_context(Context::getGlobalContextInstance())
-{}
+{
+    /// NOTE (chdb): global_context is captured here at singleton construction time and is intentionally
+    /// NOT used in the query-side methods below (get/tryGet/has/getAllRegisteredNames/empty/backup).
+    ///
+    /// In the standard ClickHouse server there is exactly one global context for the lifetime of the
+    /// process, so caching it in the constructor is safe.  chdb is different: it supports multiple
+    /// sequential sessions within the same process.  Each session calls Context::makeGlobalContext()
+    /// which overwrites Context::global_context_instance with the new session's context.  At the end
+    /// of a session, Context::shutdown() destroys the session's UserDefinedSQLObjectsDiskStorage
+    /// (resetting it to nullptr).
+    ///
+    /// If the query methods used the cached global_context, they would query the *first* session's
+    /// storage.  After that session closes, its storage is nullptr; accessing it lazily re-creates a
+    /// fresh, empty storage that never has loadObjects() called on it.  UDFs created in session 1 and
+    /// persisted to disk would then be invisible in session 2, producing:
+    ///   Code: 46. DB::Exception: Function '...' does not exist. (UNKNOWN_FUNCTION)
+    ///
+    /// The fix: use Context::getGlobalContextInstance() dynamically in every query-side method.
+    /// getGlobalContextInstance() always returns the *current* session's context (updated by each
+    /// makeGlobalContext() call), so these methods always reach the storage that had loadObjects()
+    /// invoked on it during session initialization.
+}
 
 /// Checks that a specified function can be registered, throws an exception if not.
 static void checkCanBeRegistered(
@@ -220,7 +241,9 @@ bool UserDefinedSQLFunctionFactory::unregisterFunction(
 
 ASTPtr UserDefinedSQLFunctionFactory::get(const String & function_name) const
 {
-    ASTPtr ast = global_context->getUserDefinedSQLObjectsStorage().get(function_name);
+    /// chdb: use getGlobalContextInstance() (the current session's context) rather than the cached
+    /// global_context (set at singleton construction) — see constructor comment for full rationale.
+    ASTPtr ast = Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().get(function_name);
 
     if (ast && CurrentThread::isInitialized())
     {
@@ -234,7 +257,8 @@ ASTPtr UserDefinedSQLFunctionFactory::get(const String & function_name) const
 
 ASTPtr UserDefinedSQLFunctionFactory::tryGet(const std::string & function_name) const
 {
-    ASTPtr ast = global_context->getUserDefinedSQLObjectsStorage().tryGet(function_name);
+    /// chdb: see get() comment above.
+    ASTPtr ast = Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().tryGet(function_name);
 
     if (ast && CurrentThread::isInitialized())
     {
@@ -248,26 +272,30 @@ ASTPtr UserDefinedSQLFunctionFactory::tryGet(const std::string & function_name) 
 
 bool UserDefinedSQLFunctionFactory::has(const String & function_name) const
 {
-    return global_context->getUserDefinedSQLObjectsStorage().has(function_name);
+    /// chdb: see get() comment above.
+    return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().has(function_name);
 }
 
 std::vector<std::string> UserDefinedSQLFunctionFactory::getAllRegisteredNames() const
 {
-    return global_context->getUserDefinedSQLObjectsStorage().getAllObjectNames();
+    /// chdb: see get() comment above.
+    return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().getAllObjectNames();
 }
 
 bool UserDefinedSQLFunctionFactory::empty() const
 {
-    return global_context->getUserDefinedSQLObjectsStorage().empty();
+    /// chdb: see get() comment above.
+    return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().empty();
 }
 
 void UserDefinedSQLFunctionFactory::backup(BackupEntriesCollector & backup_entries_collector, const String & data_path_in_backup) const
 {
+    /// chdb: see get() comment above.
     backupUserDefinedSQLObjects(
         backup_entries_collector,
         data_path_in_backup,
         UserDefinedSQLObjectType::Function,
-        global_context->getUserDefinedSQLObjectsStorage().getAllObjects());
+        Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().getAllObjects());
 }
 
 void UserDefinedSQLFunctionFactory::restore(RestorerFromBackup & restorer, const String & data_path_in_backup)
