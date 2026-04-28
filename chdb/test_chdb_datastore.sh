@@ -67,15 +67,17 @@ ${PYTHON} -c "import chdb; print('chdb pkg version:', getattr(chdb, '__version__
 ${PYTHON} -c "from datastore import DataStore; print('datastore import OK')"
 
 echo "=============================================="
-echo "Running pytest on datastore/tests/"
+echo "Running pytest from datastore/ on tests/"
+echo "(cwd=datastore so 'from tests.test_utils import ...' resolves to datastore/tests/)"
 echo "=============================================="
+cd "${CHDB_SRC}/datastore"
 set +e
-${PYTHON} -m pytest datastore/tests/ ${PYTEST_ARGS}
+${PYTHON} -m pytest tests/ ${PYTEST_ARGS}
 TEST_EXIT_CODE=$?
 set -e
 
 echo "Stopping ClickHouse test server (best effort)..."
-bash datastore/tests/stop_clickhouse_server.sh || true
+bash tests/stop_clickhouse_server.sh || true
 
 if [ ${TEST_EXIT_CODE} -ne 0 ]; then
     echo "DataStore tests FAILED (exit code ${TEST_EXIT_CODE}) on chdb tag ${CHDB_TAG}"
