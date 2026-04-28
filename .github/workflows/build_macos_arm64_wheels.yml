@@ -376,6 +376,17 @@ jobs:
           python -m pytest tests/test_torch_compatibility.py -v
           pyenv shell --unset
         continue-on-error: false
+      - name: Test chdb DataStore tests against upstream chdb (latest tag)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 60
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.11
+          python -m pip install dist/*.whl --force-reinstall --no-cache-dir
+          PYTHON=$(pyenv which python) bash ./chdb/test_chdb_datastore.sh
+          pyenv shell --unset
+        continue-on-error: false
       - name: Run notebook tests
         if: env.EFFECTIVE_DEBUG_MODE != 'true'
         run: |
