@@ -14,13 +14,16 @@
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/FunctionNameNormalizer.h>
+#include <Interpreters/IdentifierSemantic.h>
 #include <Interpreters/InterpreterCreateQuery.h>
 #include <Interpreters/MutationsInterpreter.h>
+#include <Interpreters/MutationsDateTimeLiteralVisitor.h>
 #include <Interpreters/MutationsNonDeterministicHelpers.h>
 #include <Interpreters/QueryLog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Parsers/ASTAlterQuery.h>
 #include <Parsers/ASTAssignment.h>
+#include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTIdentifier_fwd.h>
 #include <Parsers/ASTColumnDeclaration.h>
 #include <Storages/AlterCommands.h>
@@ -42,11 +45,12 @@ namespace DB
 {
 namespace Setting
 {
-    extern const SettingsBool allow_experimental_statistics;
+    extern const SettingsBool allow_statistics;
     extern const SettingsBool fsync_metadata;
     extern const SettingsSeconds lock_acquire_timeout;
     extern const SettingsAlterUpdateMode alter_update_mode;
     extern const SettingsBool enable_lightweight_update;
+    extern const SettingsTimezone session_timezone;
 }
 
 namespace ServerSetting
@@ -140,7 +144,7 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
     }
 
 #if CLICKHOUSE_CLOUD
-    if (database->getEngineName() == "Shared" && SharedDatabaseCatalog::instance().shouldReplicateQuery(getContext(), query_ptr))
+    if (SharedDatabaseCatalog::shouldReplicateQuery(getContext(), query_ptr))
     {
         return SharedDatabaseCatalog::instance().tryExecuteDDLQuery(query_ptr, getContext());
     }
@@ -173,17 +177,22 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
 
     /// Add default database to table identifiers that we can encounter in e.g. default expressions, mutation expression, etc.
     AddDefaultDatabaseVisitor visitor(getContext(), table_id.getDatabaseName());
-    ASTPtr command_list_ptr = alter.getChild(*alter.command_list);
+    ASTPtr command_list_ptr = alter.command_list->ptr();
     visitor.visit(command_list_ptr);
 
     AlterCommands alter_commands;
     PartitionCommands partition_commands;
     MutationCommands mutation_commands;
+    std::vector<const ASTAlterCommand *> execute_commands;
 
     for (const auto & child : alter.command_list->children)
     {
         auto * command_ast = child->as<ASTAlterCommand>();
-        if (auto alter_command = AlterCommand::parse(command_ast))
+        if (command_ast->type == ASTAlterCommand::EXECUTE_COMMAND)
+        {
+            execute_commands.push_back(command_ast);
+        }
+        else if (auto alter_command = AlterCommand::parse(command_ast))
         {
             alter_commands.emplace_back(std::move(*alter_command));
         }
@@ -207,17 +216,37 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
                             command_ast->formatForErrorMessage(), rewritten_command_ast->formatForErrorMessage());
                 }
             }
+          
+            /// When session_timezone is set, string literals compared to DateTime columns
+            /// must be wrapped with explicit timezone to avoid misinterpretation in the
+            /// background mutation thread which lacks the session context.
+            const auto & session_tz = settings[Setting::session_timezone].value;
+            if (!session_tz.empty())
+            {
+                const auto & source_ast = *mut_command->ast->as<ASTAlterCommand>();
+                auto tz_rewritten_ast = rewriteDateTimeLiteralsWithTimezone(
+                    source_ast, table->getInMemoryMetadata().columns, session_tz);
+                if (tz_rewritten_ast)
+                {
+                    auto * tz_alter_command = tz_rewritten_ast->as<ASTAlterCommand>();
+                    mut_command = MutationCommand::parse(*tz_alter_command);
+                    if (!mut_command)
+                        throw Exception(ErrorCodes::LOGICAL_ERROR,
+                            "Alter command '{}' is rewritten to invalid command '{}'",
+                            source_ast.formatForErrorMessage(), tz_rewritten_ast->formatForErrorMessage());
+                }
+            }
 
             mutation_commands.emplace_back(std::move(*mut_command));
         }
         else
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Wrong parameter type in ALTER query");
 
-        if (!settings[Setting::allow_experimental_statistics] && (
+        if (!settings[Setting::allow_statistics] && (
             command_ast->type == ASTAlterCommand::ADD_STATISTICS ||
             command_ast->type == ASTAlterCommand::DROP_STATISTICS ||
             command_ast->type == ASTAlterCommand::MATERIALIZE_STATISTICS))
-            throw Exception(ErrorCodes::INCORRECT_QUERY, "Alter table with statistic is now disabled. Turn on allow_experimental_statistics");
+            throw Exception(ErrorCodes::INCORRECT_QUERY, "Alter table with statistic is disabled. Turn on allow_statistics");
     }
 
     if (typeid_cast<DatabaseReplicated *>(database.get()))
@@ -227,6 +256,53 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
         if (1 < command_types_count || mixed_settings_amd_metadata_alter)
             throw Exception(ErrorCodes::NOT_IMPLEMENTED, "For Replicated databases it's not allowed "
                                                          "to execute ALTERs of different types (replicated and non replicated) in single query");
+    }
+
+    /// Check for conflicts between RENAME COLUMN and UPDATE/DELETE operations.
+    /// If a column is both renamed and used in UPDATE/DELETE in the same ALTER, we must fail early
+    /// to ensure atomicity - otherwise RENAME would succeed but UPDATE/DELETE would fail,
+    /// leaving the table in an unexpected state. See issue #70678.
+    if (!alter_commands.empty() && mutation_commands.hasNonEmptyMutationCommands())
+    {
+        NameSet columns_to_rename;
+        for (const auto & command : alter_commands)
+            if (command.type == AlterCommand::RENAME_COLUMN)
+                columns_to_rename.insert(command.column_name);
+
+        if (!columns_to_rename.empty())
+        {
+            /// Check UPDATE columns
+            NameSet updated_columns = mutation_commands.getAllUpdatedColumns();
+            for (const auto & column_name : columns_to_rename)
+            {
+                if (updated_columns.contains(column_name))
+                    throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                        "Cannot UPDATE column {} and RENAME it in the same ALTER query. "
+                        "Please split into separate ALTER statements.",
+                        backQuote(column_name));
+            }
+
+            /// Check DELETE/UPDATE predicates for references to renamed columns
+            for (const auto & command : mutation_commands)
+            {
+                if (command.predicate)
+                {
+                    auto identifiers = IdentifiersCollector::collect(command.predicate);
+                    for (const auto * identifier : identifiers)
+                    {
+                        auto column_name = IdentifierSemantic::getColumnName(*identifier);
+                        if (column_name && columns_to_rename.contains(*column_name))
+                        {
+                            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                                "Cannot use column {} in {} predicate and RENAME it in the same ALTER query. "
+                                "Please split into separate ALTER statements.",
+                                backQuote(*column_name),
+                                command.type == MutationCommand::DELETE ? "DELETE" : "UPDATE");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (mutation_commands.hasNonEmptyMutationCommands() || !partition_commands.empty())
@@ -301,6 +377,14 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
         auto partition_commands_pipe = table->alterPartition(metadata_snapshot, partition_commands, getContext());
         if (!partition_commands_pipe.empty())
             res.pipeline = QueryPipeline(std::move(partition_commands_pipe));
+    }
+
+    for (const auto * execute_command : execute_commands)
+    {
+        ASTPtr args_ast = execute_command->execute_args ? execute_command->execute_args->ptr() : nullptr;
+        auto execute_pipe = table->executeCommand(execute_command->execute_command_name, args_ast, getContext());
+        if (!execute_pipe.empty())
+            res.pipeline = QueryPipeline(std::move(execute_pipe));
     }
 
     return res;
@@ -626,6 +710,11 @@ AccessRightsElements InterpreterAlterQuery::getRequiredAccessForCommand(const AS
         case ASTAlterCommand::APPLY_PATCHES:
         {
             required_access.emplace_back(AccessType::ALTER_UPDATE, database, table);
+            break;
+        }
+        case ASTAlterCommand::EXECUTE_COMMAND:
+        {
+            required_access.emplace_back(AccessType::ALTER_EXECUTE, database, table);
             break;
         }
     }

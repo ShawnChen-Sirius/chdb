@@ -42,22 +42,34 @@ if [ -z "$STRIP" ]; then
     STRIP=$(ls -1 /opt/homebrew/opt/llvm@*/bin/llvm-strip* 2>/dev/null | sort -V | tail -n 1)
 fi
 
-# if none of them are found, use llvm-strip or strip
+# if none of them are found, use llvm-strip or strip (which may fail; keep set -e safe)
 if [ -z "$STRIP" ]; then
-    STRIP=$(which llvm-strip 2>/dev/null)
+    STRIP=$(command -v llvm-strip 2>/dev/null || true)
 fi
 if [ -z "$STRIP" ]; then
-    STRIP=$(which strip 2>/dev/null)
+    STRIP=$(command -v strip 2>/dev/null || true)
 fi
 
 echo "STRIP command: $STRIP"
-echo "STRIP location: $(which $STRIP 2>/dev/null || echo 'not found')"
+if [ -n "${STRIP}" ]; then
+    echo "STRIP location: $(command -v "${STRIP}" 2>/dev/null || echo 'not found')"
+else
+    echo "STRIP location: not found"
+fi
 
 # check current os type, and make ldd command
 if [ "$(uname)" == "Darwin" ]; then
     LDD="otool -L"
-    AR="llvm-ar"
-    NM="llvm-nm"
+    if command -v llvm-ar >/dev/null 2>&1; then
+        AR="llvm-ar"
+    else
+        AR="ar"
+    fi
+    if command -v llvm-nm >/dev/null 2>&1; then
+        NM="llvm-nm"
+    else
+        NM="nm"
+    fi
 elif [ "$(uname)" == "Linux" ]; then
     LDD="ldd"
     AR="ar"

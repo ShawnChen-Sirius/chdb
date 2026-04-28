@@ -1,6 +1,8 @@
 #include <Common/AllocationInterceptors.h>
 #include <Common/Allocator.h>
+#include <Common/BitHelpers.h>
 #include <Common/CurrentMemoryTracker.h>
+#include <Common/ErrnoException.h>
 #include <Common/Exception.h>
 #include <Common/VersionNumber.h>
 #include <Common/formatReadable.h>
@@ -64,7 +66,7 @@ void prefaultPages([[maybe_unused]] void * buf_, [[maybe_unused]] size_t len_)
     if (len_ < POPULATE_THRESHOLD)
         return;
 
-    if (unlikely(!is_supported_by_kernel))
+    if (!is_supported_by_kernel) [[unlikely]]
         return;
 
     auto [buf, len] = adjustToPageSize(buf_, len_, staticPageSize);
@@ -73,10 +75,12 @@ void prefaultPages([[maybe_unused]] void * buf_, [[maybe_unused]] size_t len_)
 }
 
 template <bool clear_memory, bool populate>
-void * allocNoTrack(size_t size, size_t alignment)
+void * allocImpl(size_t size, size_t alignment)
 {
+    auto trace = CurrentMemoryTracker::alloc(size);
+
     void * buf;
-    if (likely(alignment <= MALLOC_MIN_ALIGNMENT))
+    if (alignment <= MALLOC_MIN_ALIGNMENT) [[likely]]
     {
 #if USE_JEMALLOC
         if constexpr (clear_memory)
@@ -89,17 +93,26 @@ void * allocNoTrack(size_t size, size_t alignment)
         else
             buf = __real_malloc(size);
 #endif
-        if (unlikely(nullptr == buf))
-            throw DB::ErrnoException(DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "Allocator: Cannot malloc {}.", ReadableSize(static_cast<double>(size)));
+
+        if (nullptr == buf) [[unlikely]]
+        {
+            [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(size);
+            throw DB::ErrnoException(
+                DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "Allocator: Cannot malloc {}.", ReadableSize(static_cast<double>(size)));
+        }
     }
     else
     {
         buf = nullptr;
         int res = __real_posix_memalign(&buf, alignment, size);
 
-        if (unlikely(0 != res))
-            throw DB::ErrnoException(
-                DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "Cannot allocate memory (posix_memalign) {}.", ReadableSize(size));
+        if (0 != res) [[unlikely]]
+        {
+            [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(size);
+            // The value of `errno` is not set according to the man: https://man7.org/linux/man-pages/man3/posix_memalign.3.html
+            DB::ErrnoException::throwWithErrno(
+                DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, res, "Cannot allocate memory (posix_memalign) {}.", ReadableSize(size));
+        }
 
         if constexpr (clear_memory)
             memset(buf, 0, size);
@@ -108,10 +121,11 @@ void * allocNoTrack(size_t size, size_t alignment)
     if constexpr (populate)
         prefaultPages(buf, size);
 
+    trace.onAlloc(buf, size);
     return buf;
 }
 
-void freeNoTrack(void * buf)
+void freeImpl(void * buf)
 {
 #if USE_JEMALLOC
     if (unlikely(buf == nullptr))
@@ -145,10 +159,7 @@ template <bool clear_memory_, bool populate>
 void * Allocator<clear_memory_, populate>::alloc(size_t size, size_t alignment)
 {
     checkSize(size);
-    auto trace = CurrentMemoryTracker::alloc(size);
-    void * ptr = allocNoTrack<clear_memory_, populate>(size, alignment);
-    trace.onAlloc(ptr, size);
-    return ptr;
+    return allocImpl<clear_memory_, populate>(size, alignment);
 }
 
 
@@ -158,7 +169,7 @@ void Allocator<clear_memory_, populate>::free(void * buf, size_t size)
     try
     {
         checkSize(size);
-        freeNoTrack(buf);
+        freeImpl(buf);
         auto trace = CurrentMemoryTracker::free(size);
         trace.onFree(buf, size);
     }

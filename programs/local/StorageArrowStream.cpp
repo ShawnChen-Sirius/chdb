@@ -51,7 +51,7 @@ Pipe StorageArrowStream::read(
     const Names & column_names,
     const StorageSnapshotPtr & storage_snapshot,
     SelectQueryInfo & /*query_info*/,
-    ContextPtr /*context*/,
+    ContextPtr context_,
     QueryProcessingStage::Enum /*processed_stage*/,
     size_t max_block_size,
     size_t num_streams)
@@ -60,7 +60,11 @@ Pipe StorageArrowStream::read(
     storage_snapshot->check(column_names);
 
     Block sample_block = prepareSampleBlock(column_names, storage_snapshot);
-    auto format_settings = getFormatSettings(getContext());
+    // Use the pipeline context (context_), not getContext(), because the construction-time
+    // context stored via WithContext may be a short-lived Context::createCopy() created by
+    // QueryAnalyzer when overriding parallel_replicas_for_cluster_engines — identical pattern
+    // to the StoragePython fix (see PR description).
+    auto format_settings = getFormatSettings(context_);
 
     /// Create ArrowArrayStreamWrapper from the registered stream
     auto arrow_stream_wrapper = std::make_unique<CHDB::ArrowArrayStreamWrapper>(false);

@@ -1,4 +1,5 @@
 import glob
+import sys
 from itertools import chain
 from pathlib import Path
 
@@ -71,6 +72,7 @@ class Validator:
             cls.validate_file_paths_in_digest_configs(workflow)
             cls.validate_requirements_txt_files(workflow)
             cls.validate_dockers(workflow)
+            cls.validate_job_names(workflow)
 
             if workflow.event == Workflow.Event.SCHEDULE:
                 cls.evaluate_check(
@@ -308,6 +310,19 @@ class Validator:
                 )
 
     @classmethod
+    def validate_job_names(cls, workflow: Workflow.Config):
+        names_lower = {}
+        for job in workflow.jobs:
+            job_name_lower = job.name.lower()
+            if job_name_lower in names_lower:
+                cls.evaluate_check(
+                    False,
+                    f"Duplicate job name (case-insensitive): [{job.name}] conflicts with [{names_lower[job_name_lower]}]",
+                    workflow_name=workflow.name,
+                )
+            names_lower[job_name_lower] = job.name
+
+    @classmethod
     def evaluate_check(cls, check_ok, message, workflow_name, job_name=""):
         message = message.split("\n")
         messages = [message] if not isinstance(message, list) else message
@@ -319,7 +334,7 @@ class Validator:
             )
             for message in messages:
                 print(" ||  " + message)
-            raise
+            sys.exit(1)
 
     @classmethod
     def evaluate_check_simple(cls, check_ok, message):

@@ -64,27 +64,23 @@ if (USE_PYTHON)
     # Use contrib/pybind11 instead of system pybind11
     set(PYBIND11_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/pybind11/include")
 
-    include_directories(${PYBIND11_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-
     # include Python.h
     if(CHDB_CROSSCOMPILING)
         # For cross-compiling, use the provided Python include directory
         set(PYTHON_INCLUDE_DIR "${CHDB_PYTHON_INCLUDE_DIR_PREFIX}/3.9")
         message(STATUS "Cross-compiling: Using Python include directory: ${PYTHON_INCLUDE_DIR}")
     else()
-        execute_process(COMMAND python3-config --includes
-            OUTPUT_VARIABLE PYTHON_INCLUDES
+        # get_path('include') is often wrong on macOS (e.g. /Library/Python/3.9/include with no headers).
+        # Prefer paths that actually contain Python.h: INCLUDEPY, framework Headers, then fallbacks.
+        execute_process(COMMAND python3 -c "import os,sys,sysconfig; p=next((x for x in (sysconfig.get_config_var('INCLUDEPY'),os.path.join(sys.prefix,'Headers'),sysconfig.get_config_var('CONFINCLUDEDIR'),sysconfig.get_path('include')) if x and os.path.isfile(os.path.join(x,'Python.h'))),None); import sys as S; (print(p),S.exit(0)) if p else S.exit(1)"
+            OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
             OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _py_inc_rc
         )
-        string(REGEX REPLACE ".*-I([^ ]+).*" "\\1" PYTHON_INCLUDE_DIR ${PYTHON_INCLUDES})
+        if (NOT _py_inc_rc EQUAL 0 OR NOT PYTHON_INCLUDE_DIR)
+            message(FATAL_ERROR "Could not find Python.h (python3 include discovery failed). Install Python dev headers or fix PYTHON_INCLUDE_DIR.")
+        endif()
     endif()
-
-    foreach(_file ${CHDB_SOURCES})
-        set_source_files_properties(${_file}
-            PROPERTIES INCLUDE_DIRECTORIES
-            ${PYTHON_INCLUDE_DIR}
-        )
-    endforeach(_file)
 
     # remove all warnings, because pybind11 will generate a lot of warnings
     foreach(_file ${CHDB_SOURCES})
@@ -109,6 +105,21 @@ set (CLICKHOUSE_LOCAL_LINK
 )
 
 clickhouse_program_add(local)
+
+if (USE_PYTHON)
+    target_include_directories(clickhouse-local-lib PRIVATE
+        ${PYBIND11_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(clickhouse-local-lib SYSTEM PRIVATE ${PYTHON_INCLUDE_DIR})
+    # Python headers on Ubuntu/Debian use a multiarch layout: pyconfig.h includes
+    # <x86_64-linux-gnu/python3.X/pyconfig.h>.  We symlink that into the sysroot so the
+    # cross-compiler can find it without reaching into host /usr/include.
+    # Suppress -Wpoison-system-directories for these targets since the Python headers
+    # are intentionally pulled from the host (they are header-only, ABI-neutral).
+    if (OS_LINUX)
+        target_compile_options(clickhouse-local-lib PRIVATE -Wno-poison-system-directories)
+    endif()
+endif()
 
 if (TARGET ch_rust::skim)
     target_link_libraries(clickhouse-local-lib PRIVATE ch_rust::skim)

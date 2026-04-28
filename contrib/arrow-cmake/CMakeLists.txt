@@ -24,23 +24,26 @@ if (NOT ENABLE_PARQUET)
     return()
 endif()
 
-# Freebsd: ../contrib/arrow/cpp/src/arrow/util/bit-util.h:27:10: fatal error: endian.h: No such file or directory
-if (OS_FREEBSD)
-    message (FATAL_ERROR "Using internal parquet library on FreeBSD is not supported")
+# Support C11
+if(NOT DEFINED CMAKE_C_STANDARD)
+  set(CMAKE_C_STANDARD 11)
 endif()
 
-if (TARGET ch_contrib::jemalloc)
-    set (ARROW_JEMALLOC ON)
-    add_definitions(-DARROW_JEMALLOC=1)
-    message(STATUS "Using jemalloc in arrow lib")
+
+# This ensures that a standard higher than the minimum can be passed correctly
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 20)
+elseif(${CMAKE_CXX_STANDARD} VERSION_LESS 20)
+  message(FATAL_ERROR "Cannot set a CMAKE_CXX_STANDARD smaller than 20")
 endif()
 
-set (CMAKE_CXX_STANDARD 17)
+# We require a C++20 compliant compiler
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(ARROW_VERSION "11.0.0")
+set(ARROW_VERSION "23.0.0")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" ARROW_BASE_VERSION "${ARROW_VERSION}")
 
-set(ARROW_VERSION_MAJOR "11")
+set(ARROW_VERSION_MAJOR "23")
 set(ARROW_VERSION_MINOR "0")
 set(ARROW_VERSION_PATCH "0")
 
@@ -211,12 +214,12 @@ target_link_libraries(_orc PRIVATE
 target_include_directories(_orc SYSTEM BEFORE PUBLIC
     ${ORC_INCLUDE_DIR}
     "${ClickHouse_SOURCE_DIR}/contrib/arrow-cmake/cpp/src/orc/c++/include")
-if (TARGET ch_contrib::jemalloc)
-    target_link_libraries(_orc PRIVATE ch_contrib::jemalloc)
-endif ()
 target_compile_options(_orc PRIVATE
     -include "${ClickHouse_SOURCE_DIR}/contrib/google-protobuf/src/google/protobuf/stubs/port.h"
 )
+if (TARGET ch_contrib::jemalloc)
+    target_link_libraries(_orc PRIVATE ch_contrib::jemalloc)
+endif ()
 target_include_directories(_orc SYSTEM BEFORE PUBLIC ${ORC_BUILD_INCLUDE_DIR})
 target_include_directories(_orc SYSTEM PRIVATE
     ${ORC_SOURCE_SRC_DIR}
@@ -229,7 +232,9 @@ target_include_directories(_orc SYSTEM PRIVATE
 
 set(LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/arrow/cpp/src/arrow")
 
-
+set(ARROW_GENERATED_SRC_DIR ${CMAKE_CURRENT_BINARY_DIR}/cpp/src)
+configure_file("${LIBRARY_DIR}/util/config.h.cmake" "${ARROW_GENERATED_SRC_DIR}/arrow/util/config.h" ESCAPE_QUOTES)
+configure_file("${LIBRARY_DIR}/util/config_internal.h.cmake" "${ARROW_GENERATED_SRC_DIR}/arrow/util/config_internal.h" ESCAPE_QUOTES)
 
 # arrow/cpp/src/arrow/CMakeLists.txt (ARROW_SRCS + ARROW_COMPUTE + ARROW_IPC)
 # find . \( -iname \*.cc -o -iname \*.cpp -o -iname \*.c \) | sort | awk '{print "\"${LIBRARY_DIR}" substr($1,2) "\"" }' | grep -v 'test.cc' | grep -v 'json' | grep -v 'flight' \|
@@ -257,6 +262,7 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/array/concatenate.cc"
         "${LIBRARY_DIR}/array/data.cc"
         "${LIBRARY_DIR}/array/diff.cc"
+        "${LIBRARY_DIR}/array/statistics.cc"
         "${LIBRARY_DIR}/array/util.cc"
         "${LIBRARY_DIR}/array/validate.cc"
         "${LIBRARY_DIR}/buffer.cc"
@@ -283,7 +289,6 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/compute/kernels/codegen_internal.cc"
         "${LIBRARY_DIR}/compute/kernels/hash_aggregate.cc"
         "${LIBRARY_DIR}/compute/kernels/ree_util_internal.cc"
-        "${LIBRARY_DIR}/compute/kernels/row_encoder.cc"
         "${LIBRARY_DIR}/compute/kernels/scalar_arithmetic.cc"
         "${LIBRARY_DIR}/compute/kernels/scalar_boolean.cc"
         "${LIBRARY_DIR}/compute/kernels/scalar_cast_boolean.cc"
@@ -305,6 +310,7 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/compute/kernels/scalar_temporal_binary.cc"
         "${LIBRARY_DIR}/compute/kernels/scalar_temporal_unary.cc"
         "${LIBRARY_DIR}/compute/kernels/scalar_validity.cc"
+        "${LIBRARY_DIR}/compute/kernels/temporal_internal.cc"
         "${LIBRARY_DIR}/compute/kernels/util_internal.cc"
         "${LIBRARY_DIR}/compute/kernels/vector_array_sort.cc"
         "${LIBRARY_DIR}/compute/kernels/vector_cumulative_ops.cc"
@@ -320,6 +326,7 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/compute/kernels/vector_selection_internal.cc"
         "${LIBRARY_DIR}/compute/kernels/vector_selection_take_internal.cc"
         "${LIBRARY_DIR}/compute/kernels/vector_sort.cc"
+        "${LIBRARY_DIR}/compute/kernels/vector_swizzle.cc"
         "${LIBRARY_DIR}/compute/key_hash_internal.cc"
         "${LIBRARY_DIR}/compute/key_map_internal.cc"
         "${LIBRARY_DIR}/compute/light_array_internal.cc"
@@ -333,7 +340,11 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/config.cc"
         "${LIBRARY_DIR}/datum.cc"
         "${LIBRARY_DIR}/device.cc"
+        "${LIBRARY_DIR}/device_allocation_type_set.cc"
         "${LIBRARY_DIR}/extension_type.cc"
+        "${LIBRARY_DIR}/extension/bool8.cc"
+        "${LIBRARY_DIR}/extension/json.cc"
+        "${LIBRARY_DIR}/extension/uuid.cc"
         "${LIBRARY_DIR}/integration/c_data_integration_internal.cc"
         "${LIBRARY_DIR}/io/buffered.cc"
         "${LIBRARY_DIR}/io/caching.cc"
@@ -381,7 +392,10 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/util/bitmap_builders.cc"
         "${LIBRARY_DIR}/util/bitmap_ops.cc"
         "${LIBRARY_DIR}/util/bpacking.cc"
+        "${LIBRARY_DIR}/util/bpacking_scalar.cc"
+        "${LIBRARY_DIR}/util/bpacking_simd_default.cc"
         "${LIBRARY_DIR}/util/byte_size.cc"
+        "${LIBRARY_DIR}/util/byte_stream_split_internal.cc"
         "${LIBRARY_DIR}/util/cancel.cc"
         "${LIBRARY_DIR}/util/compression.cc"
         "${LIBRARY_DIR}/util/counting_semaphore.cc"
@@ -391,20 +405,25 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/util/decimal.cc"
         "${LIBRARY_DIR}/util/delimiting.cc"
         "${LIBRARY_DIR}/util/dict_util.cc"
+        "${LIBRARY_DIR}/util/fixed_width_internal.cc"
         "${LIBRARY_DIR}/util/float16.cc"
         "${LIBRARY_DIR}/util/formatting.cc"
         "${LIBRARY_DIR}/util/future.cc"
+        "${LIBRARY_DIR}/util/fuzz_internal.cc"
         "${LIBRARY_DIR}/util/hashing.cc"
         "${LIBRARY_DIR}/util/int_util.cc"
         "${LIBRARY_DIR}/util/io_util.cc"
         "${LIBRARY_DIR}/util/key_value_metadata.cc"
         "${LIBRARY_DIR}/util/list_util.cc"
+        "${LIBRARY_DIR}/util/logger.cc"
         "${LIBRARY_DIR}/util/logging.cc"
+        "${LIBRARY_DIR}/util/math_internal.cc"
         "${LIBRARY_DIR}/util/memory.cc"
         "${LIBRARY_DIR}/util/mutex.cc"
         "${LIBRARY_DIR}/util/ree_util.cc"
+        "${LIBRARY_DIR}/util/secure_string.cc"
         "${LIBRARY_DIR}/util/string.cc"
-        "${LIBRARY_DIR}/util/string_builder.cc"
+        "${LIBRARY_DIR}/util/string_util.cc"
         "${LIBRARY_DIR}/util/task_group.cc"
         "${LIBRARY_DIR}/util/tdigest.cc"
         "${LIBRARY_DIR}/util/thread_pool.cc"
@@ -417,7 +436,7 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/util/utf8.cc"
         "${LIBRARY_DIR}/util/value_parsing.cc"
         "${LIBRARY_DIR}/vendored/base64.cpp"
-        "${LIBRARY_DIR}/vendored/datetime/tz.cpp"
+        "${LIBRARY_DIR}/vendored/datetime.cpp"
         "${LIBRARY_DIR}/vendored/double-conversion/bignum-dtoa.cc"
         "${LIBRARY_DIR}/vendored/double-conversion/bignum.cc"
         "${LIBRARY_DIR}/vendored/double-conversion/cached-powers.cc"
@@ -449,8 +468,13 @@ set(ARROW_SRCS
         "${ARROW_SRC_DIR}/arrow/adapters/orc/options.cc"
         )
 
-if (TARGET ch_contrib::jemalloc)
-    SET(ARROW_SRCS "${LIBRARY_DIR}/memory_pool_jemalloc.cc" ${ARROW_SRCS})
+
+add_definitions(-DARROW_WITH_BROTLI)
+SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_brotli.cc" ${ARROW_SRCS})
+
+if (TARGET ch_contrib::bzip2)
+    add_definitions(-DARROW_WITH_BZ2)
+    SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_bz2.cc" ${ARROW_SRCS})
 endif()
 
 add_definitions(-DARROW_WITH_LZ4)
@@ -465,11 +489,77 @@ SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_zlib.cc" ${ARROW_SRCS})
 add_definitions(-DARROW_WITH_ZSTD)
 SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_zstd.cc" ${ARROW_SRCS})
 
-add_definitions(-DARROW_WITH_BROTLI)
-SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_brotli.cc" ${ARROW_SRCS})
+if (TARGET ch_contrib::jemalloc)
+    set (ARROW_JEMALLOC ON)
+    add_definitions(-DARROW_JEMALLOC=1)
+    message(STATUS "Using jemalloc in arrow lib (je_-prefix compatibility shim)")
+
+    # Arrow v23 calls unprefixed jemalloc extended API (mallocx, mallctl, …).
+    # ClickHouse builds jemalloc with --with-jemalloc-prefix=je_, so those
+    # symbols are exported as je_mallocx, je_mallctl, etc.
+    # We generate a thin shim header and force-include it only for this source
+    # file so that the rest of the build is not affected.
+    set(ARROW_JEMALLOC_COMPAT_HDR "${CMAKE_CURRENT_BINARY_DIR}/jemalloc_arrow_compat.h")
+    file(WRITE "${ARROW_JEMALLOC_COMPAT_HDR}" [[
+#pragma once
+/* Map Arrow's unprefixed jemalloc extended API to ClickHouse's je_-prefixed symbols.
+ *
+ * ClickHouse builds jemalloc with --with-jemalloc-prefix=je_ and propagates
+ * -DJEMALLOC_NO_RENAME to all consumers via target_compile_definitions INTERFACE.
+ * JEMALLOC_NO_RENAME suppresses the jemalloc_rename.h aliases that would have
+ * mapped je_XXX → XXX, so Arrow's calls to unprefixed names (mallocx, mallctl,
+ * malloc_stats_print …) are undefined.  This shim restores the mapping in the
+ * opposite direction: unprefixed → je_-prefixed, but only when renaming has
+ * been explicitly suppressed (JEMALLOC_NO_RENAME), which is exactly when the
+ * je_-prefix symbols are the canonical names. */
+#include <jemalloc/jemalloc.h>
+#ifdef JEMALLOC_NO_RENAME
+#  ifndef mallocx
+#    define mallocx            je_mallocx
+#  endif
+#  ifndef rallocx
+#    define rallocx            je_rallocx
+#  endif
+#  ifndef xallocx
+#    define xallocx            je_xallocx
+#  endif
+#  ifndef sallocx
+#    define sallocx            je_sallocx
+#  endif
+#  ifndef dallocx
+#    define dallocx            je_dallocx
+#  endif
+#  ifndef sdallocx
+#    define sdallocx           je_sdallocx
+#  endif
+#  ifndef nallocx
+#    define nallocx            je_nallocx
+#  endif
+#  ifndef mallctl
+#    define mallctl            je_mallctl
+#  endif
+#  ifndef mallctlnametomib
+#    define mallctlnametomib   je_mallctlnametomib
+#  endif
+#  ifndef mallctlbymib
+#    define mallctlbymib       je_mallctlbymib
+#  endif
+#  ifndef malloc_stats_print
+#    define malloc_stats_print je_malloc_stats_print
+#  endif
+#endif /* JEMALLOC_NO_RENAME */
+]])
+
+    set_source_files_properties(
+        "${LIBRARY_DIR}/memory_pool_jemalloc.cc"
+        PROPERTIES COMPILE_OPTIONS "-include;${ARROW_JEMALLOC_COMPAT_HDR}"
+    )
+    SET(ARROW_SRCS "${LIBRARY_DIR}/memory_pool_jemalloc.cc" ${ARROW_SRCS})
+endif()
 
 
 add_library(_arrow ${ARROW_SRCS})
+add_library(ch_contrib::arrow ALIAS _arrow)
 
 target_link_libraries(_arrow PRIVATE
     boost::filesystem
@@ -483,10 +573,10 @@ target_link_libraries(_arrow PRIVATE
     ch_contrib::zlib
     ch_contrib::zstd
     ch_contrib::brotli
+    $<$<TARGET_EXISTS:ch_contrib::bzip2>:ch_contrib::bzip2>
+    ch_contrib::curl
+    $<$<TARGET_EXISTS:ch_contrib::jemalloc>:ch_contrib::jemalloc>
 )
-if (TARGET ch_contrib::jemalloc)
-    target_link_libraries(_arrow PRIVATE ch_contrib::jemalloc)
-endif ()
 
 target_link_libraries(_arrow PUBLIC _orc)
 
@@ -496,8 +586,12 @@ target_include_directories(_arrow SYSTEM BEFORE PUBLIC ${ARROW_SRC_DIR})
 target_include_directories(_arrow SYSTEM BEFORE PUBLIC "${ClickHouse_SOURCE_DIR}/contrib/arrow-cmake/cpp/src")
 
 target_include_directories(_arrow SYSTEM PRIVATE ${ARROW_SRC_DIR})
+
 target_include_directories(_arrow SYSTEM PRIVATE ${HDFS_INCLUDE_DIR})
 
+# === arrow flight
+
+include(flight.cmake)
 
 # === parquet
 
@@ -505,19 +599,23 @@ set(LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/arrow/cpp/src/parquet")
 set(GEN_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/arrow/cpp/src/generated")
 # arrow/cpp/src/parquet/CMakeLists.txt
 set(PARQUET_SRCS
+        "${LIBRARY_DIR}/arrow/fuzz_internal.cc"
         "${LIBRARY_DIR}/arrow/path_internal.cc"
         "${LIBRARY_DIR}/arrow/reader.cc"
         "${LIBRARY_DIR}/arrow/reader_internal.cc"
         "${LIBRARY_DIR}/arrow/schema.cc"
         "${LIBRARY_DIR}/arrow/schema_internal.cc"
+        "${LIBRARY_DIR}/arrow/variant_internal.cc"
         "${LIBRARY_DIR}/arrow/writer.cc"
         "${LIBRARY_DIR}/benchmark_util.cc"
         "${LIBRARY_DIR}/bloom_filter.cc"
         "${LIBRARY_DIR}/bloom_filter_reader.cc"
+        "${LIBRARY_DIR}/chunker_internal.cc"
         "${LIBRARY_DIR}/column_reader.cc"
         "${LIBRARY_DIR}/column_scanner.cc"
         "${LIBRARY_DIR}/column_writer.cc"
-        "${LIBRARY_DIR}/encoding.cc"
+        "${LIBRARY_DIR}/decoder.cc"
+        "${LIBRARY_DIR}/encoder.cc"
         "${LIBRARY_DIR}/encryption/crypto_factory.cc"
         "${LIBRARY_DIR}/encryption/encryption.cc"
         "${LIBRARY_DIR}/encryption/encryption_internal.cc"
@@ -537,6 +635,9 @@ set(PARQUET_SRCS
         "${LIBRARY_DIR}/exception.cc"
         "${LIBRARY_DIR}/file_reader.cc"
         "${LIBRARY_DIR}/file_writer.cc"
+        "${LIBRARY_DIR}/geospatial/statistics.cc"
+        "${LIBRARY_DIR}/geospatial/util_internal.cc"
+        "${LIBRARY_DIR}/geospatial/util_json_internal.cc"
         "${LIBRARY_DIR}/level_comparison.cc"
         "${LIBRARY_DIR}/level_comparison_avx2.cc"
         "${LIBRARY_DIR}/level_conversion.cc"
@@ -547,13 +648,13 @@ set(PARQUET_SRCS
         "${LIBRARY_DIR}/printer.cc"
         "${LIBRARY_DIR}/properties.cc"
         "${LIBRARY_DIR}/schema.cc"
+        "${LIBRARY_DIR}/size_statistics.cc"
         "${LIBRARY_DIR}/statistics.cc"
         "${LIBRARY_DIR}/stream_reader.cc"
         "${LIBRARY_DIR}/stream_writer.cc"
         "${LIBRARY_DIR}/types.cc"
         "${LIBRARY_DIR}/xxhasher.cc"
 
-        "${GEN_LIBRARY_DIR}/parquet_constants.cpp"
         "${GEN_LIBRARY_DIR}/parquet_types.cpp"
         )
 #list(TRANSFORM PARQUET_SRCS PREPEND "${LIBRARY_DIR}/") # cmake 3.12
@@ -570,11 +671,10 @@ target_link_libraries(_parquet
     PRIVATE
         boost::headers_only
         boost::regex
-        OpenSSL::Crypto OpenSSL::SSL)
+        OpenSSL::Crypto OpenSSL::SSL
+        ch_contrib::rapidjson
+        $<$<TARGET_EXISTS:ch_contrib::jemalloc>:ch_contrib::jemalloc>)
 
-if (TARGET ch_contrib::jemalloc)
-    target_link_libraries(_parquet PRIVATE ch_contrib::jemalloc)
-endif ()
 
 if (SANITIZE STREQUAL "undefined")
     target_compile_options(_parquet PRIVATE -fno-sanitize=undefined)

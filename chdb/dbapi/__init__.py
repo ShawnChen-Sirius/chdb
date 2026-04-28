@@ -2,10 +2,13 @@ from .constants import FIELD_TYPE
 from . import connections as _orig_conn
 from .. import chdb_version
 
-if len(chdb_version) > 3 and chdb_version[3] is not None:
-    VERSION_STRING = "%s.%s.%s_%s" % chdb_version
+# Pad chdb_version to at least 3 components so format strings don't fail when
+# the wrapper package hasn't been installed (chdb.__version__ == "unknown").
+_version = tuple(chdb_version) + ("0",) * max(0, 3 - len(chdb_version))
+if len(_version) > 3 and _version[3] is not None:
+    VERSION_STRING = "%s.%s.%s_%s" % _version[:4]
 else:
-    VERSION_STRING = "%s.%s.%s" % chdb_version[:3]
+    VERSION_STRING = "%s.%s.%s" % _version[:3]
 
 threadsafety = 1
 apilevel = "2.0"
