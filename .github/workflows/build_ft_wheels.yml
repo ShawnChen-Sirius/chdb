@@ -1,0 +1,179 @@
+name: Build & Test Free-Threading Wheels
+
+# Free-threading (PEP 703) wheels are built on dedicated runners, isolated from
+# the regular / lite wheel workflows. Sharing a runner with the regular and
+# lite builds risks cmake-cache cross-contamination (e.g. -DCHDB_LITE=ON
+# leaking from a previous step), which previously caused link errors. Keeping
+# FT in its own workflow gives every build a clean buildlib/.
+#
+# Scope (intentionally narrow): only Linux x86_64 + Python 3.14t is built,
+# tested, and published. The Linux arm64 and macOS (arm64 / x86_64) FT jobs,
+# along with Python 3.13t, are not produced. Re-enable by restoring the
+# deleted jobs and dropping the FT_VERSIONS env override below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      TAG_NAME:
+        description: 'Release Version Tag'
+        required: true
+  release:
+    types: [created]
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Linux x86_64 — native build, audit, and test
+  # ───────────────────────────────────────────────────────────────────────────
+  ft_linux_x86_64:
+    name: FT wheels (Linux x86_64)
+    runs-on: [self-hosted, linux, x64, ubuntu-latest]
+    if: ${{ !github.event.pull_request.draft }}
+    timeout-minutes: 600
+    steps:
+      - name: Install Python build dependencies
+        run: |
+          # Fresh self-hosted runners often have unattended-upgrades holding the
+          # dpkg lock; wait it out before running apt to avoid a race.
+          for _ in $(seq 1 60); do
+            sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+            echo "Waiting for dpkg lock (held by unattended-upgrades)..."
+            sleep 5
+          done
+          sudo apt-get update
+          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev \
+            libbz2-dev libreadline-dev wget curl llvm \
+            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+            libffi-dev liblzma-dev libsqlite3-dev golang-go liblz4-dev
+      - name: Install GitHub CLI
+        run: |
+          wget https://github.com/cli/cli/releases/download/v2.82.1/gh_2.82.1_linux_amd64.tar.gz -O gh.tar.gz
+          tar -xf gh.tar.gz
+          sudo cp gh_*/bin/gh /usr/local/bin/
+          sudo chmod +x /usr/local/bin/gh
+          gh --version
+      - name: Setup pyenv (base Python for tooling)
+        run: |
+          rm -rf $HOME/.pyenv
+          curl https://pyenv.run | bash
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          # build_and_test_ft_linux.sh resolves & installs the FT (`t`) versions
+          # itself. A regular Python is needed only for pyenv plumbing.
+          pyenv install 3.9:latest
+          pyenv global 3.9
+      - name: Upgrade Rust toolchain
+        run: |
+          rustup toolchain install nightly-2026-03-22
+          rustup default nightly-2026-03-22
+          rustup component add rust-src
+          rustc --version
+          cargo --version
+      - name: Install clang++ for Ubuntu
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y make cmake ccache ninja-build yasm gawk wget
+          sudo apt-get install -y lld-21
+          if ! command -v wasm-ld &> /dev/null; then
+            sudo ln -sf /usr/bin/wasm-ld-21 /usr/bin/wasm-ld || true
+          fi
+          ccache -s
+      - name: Update git
+        run: |
+          sudo add-apt-repository ppa:git-core/ppa -y
+          sudo apt-get update
+          sudo apt-get install -y git
+          git --version
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Update submodules
+        run: git submodule update --init --recursive --jobs 4
+      - name: Update version for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          python -m pip install bump-my-version
+          TAG_NAME=${GITHUB_REF#refs/tags/v}
+          bump-my-version replace --new-version $TAG_NAME
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ubuntu-22.04-x86_64
+          max-size: 5G
+          append-timestamp: true
+      - name: remove old clang and link clang-21 to clang
+        run: |
+          sudo rm -f /usr/bin/clang || true
+          sudo ln -s /usr/bin/clang-21 /usr/bin/clang
+          sudo rm -f /usr/bin/clang++ || true
+          sudo ln -s /usr/bin/clang++-21 /usr/bin/clang++
+      - name: Install patchelf
+        run: |
+          # Extract into a fresh dir; /tmp has the sticky bit which makes tar
+          # fail when restoring metadata on the extraction root.
+          mkdir -p /tmp/patchelf-install
+          wget -q https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0-x86_64.tar.gz -O /tmp/patchelf-install/patchelf.tar.gz
+          tar -xf /tmp/patchelf-install/patchelf.tar.gz -C /tmp/patchelf-install
+          sudo cp /tmp/patchelf-install/bin/patchelf /usr/bin/
+          sudo chmod +x /usr/bin/patchelf
+          patchelf --version
+      - name: Build & test FT wheels
+        timeout-minutes: 600
+        env:
+          AUDITWHEEL_PLAT: manylinux2014_x86_64
+          PATCHELF_ARCH: x86_64
+          # Restrict FT publishing to Python 3.14t only (see workflow header).
+          FT_VERSIONS: 3.14t
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          source ~/.cargo/env
+          export CC=/usr/bin/clang
+          export CXX=/usr/bin/clang++
+          bash .github/scripts/build_and_test_ft_linux.sh
+      - name: Upload FT wheels to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          for whl in ft_dist/*.whl; do
+            [ -f "$whl" ] && gh release upload ${{ github.ref_name }} "$whl" --clobber
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chdb-ft-linux-x86_64
+          path: ft_dist/*.whl
+          overwrite: true
+      - name: Upload FT wheels to pypi
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          ft_full=$(pyenv versions --bare | grep 't$' | head -1)
+          if [ -z "$ft_full" ]; then
+            echo "ERROR: no free-threading Python found in pyenv (expected one ending in 't')" >&2
+            exit 1
+          fi
+          export PYENV_VERSION=$ft_full
+          python -m pip install twine
+          python -m twine upload ft_dist/*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+
