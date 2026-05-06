@@ -11,6 +11,7 @@
 #include <DataTypes/DataTypeDateTime.h>
 #include <DataTypes/DataTypeDateTime64.h>
 #include <DataTypes/DataTypeFactory.h>
+#include <DataTypes/getLeastSupertype.h>
 #include <base/defines.h>
 #include <Common/Exception.h>
 #include <IO/readIntText.h>
