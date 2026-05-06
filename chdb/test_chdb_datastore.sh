@@ -40,11 +40,13 @@ if [ -z "${CHDB_TAG:-}" ]; then
     echo "Resolving latest chdb release tag from GitHub..."
     # Use git ls-remote (anonymous git protocol) instead of the REST API to avoid
     # the unauthenticated 60-req/hour rate limit that frequently 403s on shared
-    # CI runner IPs.
-    CHDB_TAG=$(git ls-remote --tags --refs --sort=-v:refname \
-        https://github.com/chdb-io/chdb.git \
-        | head -n 1 \
-        | sed 's|.*refs/tags/||')
+    # CI runner IPs. Capture the full output into a variable first so that
+    # taking the first line cannot trigger SIGPIPE on the producer (which would
+    # fail the script under `set -o pipefail`).
+    LS_REMOTE_OUT=$(git ls-remote --tags --refs --sort=-v:refname \
+        https://github.com/chdb-io/chdb.git)
+    LATEST_REF=${LS_REMOTE_OUT%%$'\n'*}
+    CHDB_TAG=${LATEST_REF##*refs/tags/}
     if [ -z "${CHDB_TAG}" ]; then
         echo "ERROR: failed to resolve latest chdb tag via git ls-remote." >&2
         exit 1
