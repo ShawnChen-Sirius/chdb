@@ -1239,7 +1239,7 @@ ProjectionNames QueryAnalyzer::resolveFunction(QueryTreeNodePtr & node, Identifi
     if (!function)
     {
         function = CHDB::PythonUDFFactory::instance().tryGetFunction(function_name);
-        is_executable_udf = false;
+        can_have_parameters = false;
     }
 
     ResolvedFunctionsCache * function_cache = nullptr;
