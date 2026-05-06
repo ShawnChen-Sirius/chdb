@@ -1,11 +1,9 @@
-#include <Interpreters/Context.h>
-#include <base/getPageSize.h>
-#include <Common/CurrentThread.h>
 #include <Common/Exception.h>
-#include <Common/MemoryTrackerBlockerInThread.h>
-#include <Common/QueryProfiler.h>
+#include <Common/ErrnoException.h>
 #include <Common/ThreadProfileEvents.h>
+#include <Common/QueryProfiler.h>
 #include <Common/ThreadStatus.h>
+#include <Common/CurrentThread.h>
 #include <Common/logger_useful.h>
 #include <Common/setThreadName.h>
 #include <Common/memory.h>
@@ -192,7 +190,7 @@ const String & ThreadStatus::getQueryId() const
     return query_id;
 }
 
-ContextPtr ThreadStatus::getQueryContext() const
+ContextPtr ThreadStatus::tryGetQueryContext() const
 {
     return query_context.lock();
 }

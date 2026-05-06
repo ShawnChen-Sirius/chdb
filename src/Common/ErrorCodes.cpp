@@ -645,6 +645,11 @@
     M(763, SESSION_REFUSED) \
     M(764, DEDUPLICATION_IS_NOT_POSSIBLE) \
     M(765, UNKNOWN_MASKING_POLICY) \
+    M(766, INSTRUMENTATION_ERROR) \
+    M(767, REQUIRED_SECOND_FACTOR) \
+    M(768, CANNOT_EXECUTE_PROMQL_QUERY) \
+    M(769, NAMED_COLLECTION_IS_USED) \
+    M(770, WASM_ERROR) \
 \
     M(800, PY_EXCEPTION_OCCURED) \
     M(801, PY_OBJECT_NOT_FOUND) \
@@ -653,6 +658,7 @@
     M(901, CANNOT_USE_DISTRIBUTED_CACHE) \
     M(902, PROTOCOL_VERSION_MISMATCH) \
     M(903, DISTRIBUTED_CACHE_REGISTRY_SHUTDOWN) \
+    M(904, TOO_MANY_UNAVAILABLE_SHARDS) \
 \
     M(999, KEEPER_EXCEPTION) \
     M(1000, POCO_EXCEPTION) \
@@ -714,8 +720,7 @@ namespace ErrorCodes
 
     ErrorCode end() { return END + 1; }
 
-    size_t increment(
-        ErrorCode error_code, bool remote, const std::string & message, const std::string & format_string, const FramePointers & trace)
+    size_t increment(ErrorCode error_code, bool remote, const std::string & message, const std::string & format_string, const FramePointers & trace)
     {
         if (error_code < 0 || error_code >= end())
         {
@@ -739,8 +744,7 @@ namespace ErrorCodes
         values[error_code].extendedMessage(remote, error_index, message);
     }
 
-    size_t
-    ErrorPairHolder::increment(bool remote, const std::string & message, const std::string & format_string, const FramePointers & trace)
+    size_t ErrorPairHolder::increment(bool remote, const std::string & message, const std::string & format_string, const FramePointers & trace)
     {
         const auto now = std::chrono::system_clock::now();
 

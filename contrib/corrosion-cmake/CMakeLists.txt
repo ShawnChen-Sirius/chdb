@@ -146,11 +146,20 @@ else()
     list(APPEND RUSTFLAGS "-C" "metadata=with-sanitizer-${SANITIZE}")
 endif()
 
+# Use v0 symbol mangling for shorter symbol names.
+# The legacy mangling produces extremely long symbols (up to 165 KB) from deeply nested
+# generic types in parser combinator libraries like chumsky (used by prqlc).
+# v0 mangling uses backreference compression for repeated type paths.
+list(APPEND RUSTFLAGS "-C" "symbol-mangling-version=v0")
+
+# Suppress warnings
 list(APPEND RUSTFLAGS
-    # Suppress warnings in delta-kernel-rs
+    # delta-kernel-rs
     "-Adead_code"
-    # Suppress warnings in skim
+    # skim
     "-Amismatched_lifetime_syntaxes"
+    # wasmtime
+    "-Aunused_parens -Aunused_imports"
 )
 
 list(JOIN RUSTFLAGS " " RUSTFLAGS)
@@ -202,7 +211,7 @@ endfunction()
 function(clickhouse_config_crate_flags target_name)
     corrosion_set_env_vars(${target_name} "CFLAGS=${RUST_CFLAGS}")
     corrosion_set_env_vars(${target_name} "CXXFLAGS=${RUST_CXXFLAGS}")
-    corrosion_set_env_vars(${target_name} "RUSTFLAGS=${RUSTFLAGS}")
+    corrosion_set_env_vars(${target_name} "RUSTFLAGS=${RUSTFLAGS} --cfg osslconf=\"OPENSSL_NO_DEPRECATED_3_0\"")
     corrosion_set_env_vars(${target_name} "RUSTDOCFLAGS=${RUSTFLAGS}")
     if (CMAKE_OSX_SYSROOT)
         corrosion_set_env_vars(${target_name} "SDKROOT=${CMAKE_OSX_SYSROOT}")

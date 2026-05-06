@@ -12,105 +12,41 @@ set -u
 set -o pipefail
 
 stage=${stage:-}
-script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-echo "$script_dir"
-repo_dir=ch
-BINARY_TO_DOWNLOAD=${BINARY_TO_DOWNLOAD:="clang-18_debug_none_unsplitted_disable_False_binary"}
-BINARY_URL_TO_DOWNLOAD=${BINARY_URL_TO_DOWNLOAD:="https://clickhouse-builds.s3.amazonaws.com/$PR_TO_TEST/$SHA_TO_TEST/clickhouse_build_check/$BINARY_TO_DOWNLOAD/clickhouse"}
 
-function git_clone_with_retry
-{
-    for _ in 1 2 3 4; do
-        if git clone --depth 1 https://github.com/ClickHouse/ClickHouse.git -- "$1" 2>&1 | ts '%Y-%m-%d %H:%M:%S';then
-            return 0
-        else
-            sleep 0.5
-        fi
-    done
-    return 1
-}
+repo_dir=/repo
 
-function clone
-{
-    # For local runs, start directly from the "fuzz" stage.
-    rm -rf "$repo_dir" ||:
-    mkdir "$repo_dir" ||:
+CONFIG_DIR="/etc/clickhouse-server"
 
-    git_clone_with_retry "$repo_dir"
-    (
-        cd "$repo_dir"
-        if [ "$PR_TO_TEST" != "0" ]; then
-            if git fetch --depth 1 origin "+refs/pull/$PR_TO_TEST/merge"; then
-                git checkout FETCH_HEAD
-                echo "Checked out pull/$PR_TO_TEST/merge ($(git rev-parse FETCH_HEAD))"
-            else
-                git fetch --depth 1 origin "+refs/pull/$PR_TO_TEST/head"
-                git checkout "$SHA_TO_TEST"
-                echo "Checked out nominal SHA $SHA_TO_TEST for PR $PR_TO_TEST"
-            fi
-            git diff --name-only master HEAD | tee ci-changed-files.txt
-        else
-            if [ -v SHA_TO_TEST ]; then
-                git fetch --depth 2 origin "$SHA_TO_TEST"
-                git checkout "$SHA_TO_TEST"
-                echo "Checked out nominal SHA $SHA_TO_TEST for master"
-            else
-                git fetch --depth 2 origin
-                echo "Using default repository head $(git rev-parse HEAD)"
-            fi
-            git diff --name-only HEAD~1 HEAD | tee ci-changed-files.txt
-        fi
-        cd -
-    )
+export PATH="$repo_dir/ci/tmp/:$PATH"
+export PYTHONPATH=$repo_dir:$repo_dir/ci
 
-    ls -lath ||:
-}
-
-function wget_with_retry
-{
-    for _ in 1 2 3 4; do
-        if wget -nv -nd -c "$1";then
-            return 0
-        else
-            sleep 0.5
-        fi
-    done
-    return 1
-}
-
-function download
-{
-    wget_with_retry "$BINARY_URL_TO_DOWNLOAD"
-
-    chmod +x clickhouse
-    # clickhouse may be compressed - run once to decompress
-    ./clickhouse --query "SELECT 1" ||:
-    ln -s ./clickhouse ./clickhouse-server
-    ln -s ./clickhouse ./clickhouse-client
-    ln -s ./clickhouse ./clickhouse-local
-
-    # clickhouse-server is in the current dir
-    export PATH="$PWD:$PATH"
-}
+cd /workspace
 
 function configure
 {
-    rm -rf db ||:
-    mkdir db ||:
-    cp -av --dereference "$repo_dir"/programs/server/config* db
-    cp -av --dereference "$repo_dir"/programs/server/user* db
+    chmod +x $repo_dir/ci/tmp/clickhouse
+    # clickhouse may be compressed - run once to decompress
+    $repo_dir/ci/tmp/clickhouse --query "SELECT 1" ||:
+    ln -sf $repo_dir/ci/tmp/clickhouse $repo_dir/ci/tmp/clickhouse-server
+    ln -sf $repo_dir/ci/tmp/clickhouse $repo_dir/ci/tmp/clickhouse-client
+    ln -sf $repo_dir/ci/tmp/clickhouse $repo_dir/ci/tmp/clickhouse-local
+    rm -rf $CONFIG_DIR ||:
+    mkdir -p $CONFIG_DIR ||:
+    cp -av --dereference "$repo_dir"/programs/server/config* $CONFIG_DIR
+    cp -av --dereference "$repo_dir"/programs/server/user* $CONFIG_DIR
     # TODO figure out which ones are needed
-    cp -av --dereference "$repo_dir"/tests/config/config.d/listen.xml db/config.d
-    cp -av --dereference "$script_dir"/query-fuzzer-tweaks-users.xml db/users.d
-    cp -av --dereference "$script_dir"/allow-nullable-key.xml db/config.d
+    cp -av --dereference "$repo_dir"/tests/config/config.d/listen.xml $CONFIG_DIR/config.d
+    cp -av --dereference "$repo_dir"/tests/config/users.d/ci_logs_sender.yaml $CONFIG_DIR/users.d
+    cp -av --dereference "$repo_dir"/ci/jobs/scripts/fuzzer/query-fuzzer-tweaks-users.xml $CONFIG_DIR/users.d
+    cp -av --dereference "$repo_dir"/ci/jobs/scripts/fuzzer/fuzz-server-settings.xml $CONFIG_DIR/config.d
 
-    cat > db/config.d/max_server_memory_usage_to_ram_ratio.xml <<EOL
+    cat > $CONFIG_DIR/config.d/max_server_memory_usage_to_ram_ratio.xml <<EOL
 <clickhouse>
     <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
 </clickhouse>
 EOL
 
-    cat > db/config.d/core.xml <<EOL
+    cat > $CONFIG_DIR/config.d/core.xml <<EOL
 <clickhouse>
     <core_dump>
         <!-- 100GiB -->
@@ -123,7 +59,7 @@ EOL
 </clickhouse>
 EOL
 
-    (cd $repo_dir && python3 $repo_dir/ci/jobs/scripts/clickhouse_proc.py logs_export_config) || { echo "Failed to create log export config"; exit 1; }
+    (cd $repo_dir && python3 $repo_dir/ci/jobs/scripts/clickhouse_proc.py logs_export_config) || echo "Failed to create log export config"
 }
 
 function filter_exists_and_template
@@ -173,12 +109,14 @@ function fuzz
 
     # server.log -> All server logs, including sanitizer
     # stderr.log -> Process logs (sanitizer) only
-    clickhouse-server \
-        --config-file $CONFIG_DIR/config.xml \
-        --pid-file /var/run/clickhouse-server/clickhouse-server.pid \
-        --  --path $CONFIG_DIR \
-            --logger.console=0 \
-            --logger.log=server.log 2>&1 | tee -a stderr.log >> server.log 2>&1 &
+    ( clickhouse-server \
+          --config-file $CONFIG_DIR/config.xml \
+          --pid-file /var/run/clickhouse-server/clickhouse-server.pid \
+          --  --path $CONFIG_DIR \
+              --logger.console=0 \
+              --logger.log=server.log 2>&1 | tee -a stderr.log >> server.log 2>&1
+      exit "${PIPESTATUS[0]}" ) &
+    server_bg_pid=$!
     for _ in {1..30}
     do
         if clickhouse-client --query "select 1"
@@ -191,79 +129,130 @@ function fuzz
 
     kill -0 $server_pid
 
-    # Set follow-fork-mode to parent, because we attach to clickhouse-server, not to watchdog
-    # and clickhouse-server can do fork-exec, for example, to run some bridge.
-    # Do not set nostop noprint for all signals, because some it may cause gdb to hang,
-    # explicitly ignore non-fatal signals that are used by server.
-    # Number of SIGRTMIN can be determined only in runtime.
-    RTMIN=$(kill -l SIGRTMIN)
-    echo "
-set follow-fork-mode parent
-handle SIGHUP nostop noprint pass
-handle SIGINT nostop noprint pass
-handle SIGQUIT nostop noprint pass
-handle SIGPIPE nostop noprint pass
-handle SIGTERM nostop noprint pass
-handle SIGUSR1 nostop noprint pass
-handle SIGUSR2 nostop noprint pass
-handle SIG$RTMIN nostop noprint pass
-info signals
-continue
-backtrace full
-thread apply all backtrace full
-info registers
-disassemble /s
-up
-disassemble /s
-up
-disassemble /s
-p \"done\"
-detach
-quit
-" > script.gdb
+    IS_ASAN=$(clickhouse-client --query "SELECT count() FROM system.build_options WHERE name = 'CXX_FLAGS' AND position('sanitize=address' IN value)")
+    if [[ "$IS_ASAN" = "1" ]];
+    then
+        echo "ASAN build detected. Not using gdb since it disables LeakSanitizer detections"
+    else
+        # Set follow-fork-mode to parent, because we attach to clickhouse-server, not to watchdog
+        # and clickhouse-server can do fork-exec, for example, to run some bridge.
+        # Do not set nostop noprint for all signals, because some it may cause gdb to hang,
+        # explicitly ignore non-fatal signals that are used by server.
+        # Number of SIGRTMIN can be determined only in runtime.
+        RTMIN=$(kill -l SIGRTMIN)
+        echo "
+    set follow-fork-mode parent
+    handle SIGHUP nostop noprint pass
+    handle SIGINT nostop noprint pass
+    handle SIGQUIT nostop noprint pass
+    handle SIGPIPE nostop noprint pass
+    handle SIGTERM nostop noprint pass
+    handle SIGUSR1 nostop noprint pass
+    handle SIGUSR2 nostop noprint pass
+    handle SIG$RTMIN nostop noprint pass
+    info signals
+    continue
+    backtrace full
+    thread apply all backtrace full
+    info registers
+    disassemble /s
+    up
+    disassemble /s
+    up
+    disassemble /s
+    p \"done\"
+    detach
+    quit
+    " > script.gdb
 
-    gdb -batch -command script.gdb -p $server_pid &
-    sleep 5
-    # gdb will send SIGSTOP, spend some time loading debug info, and then send SIGCONT, wait for it (up to send_timeout, 300s)
-    time clickhouse-client --query "SELECT 'Connected to clickhouse-server after attaching gdb'" ||:
+        gdb -batch -command script.gdb -p $server_pid &
+        sleep 5
+        # gdb will send SIGSTOP, spend some time loading debug info, and then send SIGCONT, wait for it (up to send_timeout, 300s)
+        time clickhouse-client --query "SELECT 'Connected to clickhouse-server after attaching gdb'" ||:
 
-    # Check connectivity after we attach gdb, because it might cause the server
-    # to freeze, and the fuzzer will fail. In debug build, it can take a lot of time.
-    for _ in {1..180}
-    do
-        if clickhouse-client --query "select 1"
-        then
-            break
-        fi
-        sleep 1
-    done
-    kill -0 $server_pid # This checks that it is our server that is started and not some other one
+        # Check connectivity after we attach gdb, because it might cause the server
+        # to freeze, and the fuzzer will fail. In debug build, it can take a lot of time.
+        for _ in {1..180}
+        do
+            if clickhouse-client --query "select 1"
+            then
+                break
+            fi
+            sleep 1
+        done
+        kill -0 $server_pid # This checks that it is our server that is started and not some other one
+    fi
+
     echo 'Server started and responded.'
 
-    setup_logs_replication
+    (cd $repo_dir && python3 $repo_dir/ci/jobs/scripts/clickhouse_proc.py logs_export_start) || echo "Failed to start log exports"
 
-    # SC2012: Use find instead of ls to better handle non-alphanumeric filenames. They are all alphanumeric.
-    # SC2046: Quote this to prevent word splitting. Actually, I need word splitting.
-    # shellcheck disable=SC2012,SC2046
-    timeout -s TERM --preserve-status 30m clickhouse-client \
+    # Setup arguments for the fuzzer
+    FUZZER_OUTPUT_SQL_FILE=''
+
+    if [[ "$FUZZER_TO_RUN" = "AST Fuzzer" ]];
+    then
+        if [[ -n "${TARGETED_QUERIES_FILE:-}" ]] && [[ -f "${TARGETED_QUERIES_FILE}" ]];
+        then
+            QUERIES_FILE="$(cat "${TARGETED_QUERIES_FILE}")"
+            echo "Using targeted AST fuzzer corpus from ${TARGETED_QUERIES_FILE}"
+        else
+            QUERIES_FILE=$(find /repo/tests/queries/0_stateless -type f -name "*.sql" | sort -R)
+        fi
+        if [[ -n "${FUZZER_COMPATIBILITY:-}" ]];
+        then
+            COMPAT_ARG="--compatibility=${FUZZER_COMPATIBILITY}"
+            echo "Using AST fuzzer compatibility setting: ${FUZZER_COMPATIBILITY}"
+        else
+            COMPAT_ARG=""
+        fi
+        FUZZER_ARGS="--query-fuzzer-runs=1000 --create-query-fuzzer-runs=50 $COMPAT_ARG --queries-file $QUERIES_FILE $NEW_TESTS_OPT"
+    elif [ "$FUZZER_TO_RUN" = "BuzzHouse" ]
+    then
+        FUZZER_ARGS="--buzz-house-config=fuzz.json"
+    else
+        >&2 echo "Fuzzer \"$FUZZER_TO_RUN\" unknown, provide either \"AST Fuzzer\" or \"BuzzHouse\""
+        exit 1
+    fi
+
+    # Allow the fuzzer to run for some time, giving it a grace period of 5m to finish once the time
+    # out triggers. After that, it'll send a SIGKILL to the fuzzer to make sure it finishes within
+    # a reasonable time.
+    timeout --verbose --signal TERM --kill-after=5m --preserve-status "${FUZZ_TIME_LIMIT:-30m}" clickhouse-client \
         --max_memory_usage_in_client=1000000000 \
         --receive_timeout=10 \
         --receive_data_timeout_ms=10000 \
         --stacktrace \
-        --query-fuzzer-runs=1000 \
-        --create-query-fuzzer-runs=50 \
-        --queries-file $(ls -1 ch/tests/queries/0_stateless/*.sql | sort -R) \
-        $NEW_TESTS_OPT \
+        $FUZZER_ARGS \
         > fuzzer.log \
         2>&1 &
     fuzzer_pid=$!
     echo "Fuzzer pid is $fuzzer_pid"
 
+    # We need to give timeout some time to execute the underlying command with that many arguments
+    elapsed=0
+    maximum=50
+    while [[ $elapsed -lt $maximum ]]; do
+        if ps -o pid= --ppid "$fuzzer_pid"; then
+            echo "Found underlying PID!"
+            break;
+        else
+            echo "Not found. Trying again..."
+        fi
+        sleep 0.1
+        elapsed=$((elapsed+1))
+    done
+
     # The fuzzer_pid belongs to the timeout process.
     actual_fuzzer_pid=$(ps -o pid= --ppid "$fuzzer_pid")
 
-    echo "Attaching gdb to the fuzzer itself"
-    gdb -batch -command script.gdb -p $actual_fuzzer_pid &
+    if [[ "$IS_ASAN" = "1" ]];
+    then
+        echo "ASAN build detected. Not using gdb since it disables LeakSanitizer detections"
+    else
+        echo "Attaching gdb to the fuzzer itself"
+        gdb -batch -command script.gdb -p $actual_fuzzer_pid &
+    fi
 
     # Wait for the fuzzer to complete.
     # Note that the 'wait || ...' thing is required so that the script doesn't
@@ -302,70 +291,23 @@ quit
         fi
     done
 
-    # wait in background to call wait in foreground and ensure that the
-    # process is alive, since w/o job control this is the only way to obtain
-    # the exit code
+    # Stop the server in background so we can wait for the subshell to
+    # finish in the foreground. We wait on server_bg_pid (the subshell running
+    # the server pipeline) rather than server_pid (from the PID file), because
+    # the PID file contains the forked server process which is not a direct
+    # child of this shell, so wait would fail with "not a child of this shell".
+    # The subshell exits with clickhouse-server's exit code via PIPESTATUS.
     stop_server &
     server_exit_code=0
-    wait $server_pid || server_exit_code=$?
+    wait $server_bg_pid || server_exit_code=$?
     echo "Server exit code is $server_exit_code"
 
-    # Make files with status and description we'll show for this check on Github.
-    task_exit_code=$fuzzer_exit_code
-    if [ "$server_died" == 1 ]
-    then
-        # The server has died.
-        if ! rg --text -o 'Received signal.*|Logical error.*|Assertion.*failed|Failed assertion.*|.*runtime error: .*|.*is located.*|(SUMMARY|ERROR): [a-zA-Z]+Sanitizer:.*|.*_LIBCPP_ASSERT.*|.*Child process was terminated by signal 9.*' server.log > description.txt
-        then
-            echo "Lost connection to server. See the logs." > description.txt
-        fi
-
-        IS_SANITIZED=$(clickhouse-local --query "SELECT value LIKE '%-fsanitize=%' FROM system.build_options WHERE name = 'CXX_FLAGS'")
-
-        if [ "${IS_SANITIZED}" -eq "1" ] && rg --text 'Sanitizer:? (out-of-memory|out of memory|failed to allocate)|Child process was terminated by signal 9' description.txt
-        then
-            # OOM of sanitizer is not a problem we can handle - treat it as success, but preserve the description.
-            # Why? Because sanitizers have the memory overhead, that is not controllable from inside clickhouse-server.
-            task_exit_code=0
-            echo "success" > status.txt
-        else
-            task_exit_code=210
-            echo "failure" > status.txt
-        fi
-
-    elif [ "$fuzzer_exit_code" == "143" ] || [ "$fuzzer_exit_code" == "0" ]
-    then
-        # Variants of a normal run:
-        # 0 -- fuzzing ended earlier than timeout.
-        # 143 -- SIGTERM -- the fuzzer was killed by timeout.
-        task_exit_code=0
-        echo "success" > status.txt
-        echo "OK" > description.txt
-    elif [ "$fuzzer_exit_code" == "137" ]
-    then
-        # Killed.
-        task_exit_code=$fuzzer_exit_code
-        echo "failure" > status.txt
-        echo "Killed" > description.txt
-    else
-        # The server was alive, but the fuzzer returned some error. This might
-        # be some client-side error detected by fuzzing, or a problem in the
-        # fuzzer itself. Don't grep the server log in this case, because we will
-        # find a message about normal server termination (Received signal 15),
-        # which is confusing.
-        task_exit_code=$fuzzer_exit_code
-        echo "failure" > status.txt
-        echo "Let op!" > description.txt
-        echo "Fuzzer went wrong with error code: ($fuzzer_exit_code). Its process died somehow when the server stayed alive. The server log probably won't tell you much so try to find information in other files." >>description.txt
-        { rg -ao "Found error:.*" fuzzer.log || rg -ao "Exception:.*" fuzzer.log; } | tail -1 >>description.txt
-    fi
+    echo -e "$server_died\t$server_exit_code\t$fuzzer_exit_code" > status.tsv
 
     if test -f core.*; then
         zstd --threads=0 core.*
         mv core.*.zst core.zst
     fi
-
-    dmesg -T | rg -q -F -e 'Out of memory: Killed process' -e 'oom_reaper: reaped process' -e 'oom-kill:constraint=CONSTRAINT_NONE' && echo "OOM in dmesg" ||:
 }
 
 case "$stage" in
@@ -377,79 +319,6 @@ case "$stage" in
 "fuzz")
     time fuzz
     ;&
-"report")
-
-CORE_LINK=''
-if [ -f core.zst ]; then
-    CORE_LINK='<a href="core.zst">core.zst</a>'
-fi
-
-# Keep all the lines in the paragraphs containing <Fatal> that either contain <Fatal> or don't start with 20... (year)
-sed -n '/<Fatal>/,/^$/p' server.log | awk '/<Fatal>/ || !/^20/' > fatal.log ||:
-FATAL_LINK=''
-if [ -s fatal.log ]; then
-    FATAL_LINK='<a href="fatal.log">fatal.log</a>'
-fi
-
-dmesg -T > dmesg.log ||:
-
-zstd --threads=0 --rm server.log
-zstd --threads=0 --rm fuzzer.log
-
-cat > report.html <<EOF ||:
-<!DOCTYPE html>
-<html lang="en">
-  <style>
-body { font-family: "DejaVu Sans", "Noto Sans", Arial, sans-serif; background: #EEE; }
-h1 { margin-left: 10px; }
-th, td { border: 0; padding: 5px 10px 5px 10px; text-align: left; vertical-align: top; line-height: 1.5; background-color: #FFF; }
-td { white-space: pre; font-family: Monospace, Courier New; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 8px 25px -5px rgba(0, 0, 0, 0.1); }
-a { color: #06F; text-decoration: none; }
-a:hover, a:active { color: #F40; text-decoration: underline; }
-table { border: 0; }
-p.links a { padding: 5px; margin: 3px; background: #FFF; line-height: 2; white-space: nowrap; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 8px 25px -5px rgba(0, 0, 0, 0.1); }
-
-  </style>
-  <title>AST Fuzzer for PR #${PR_TO_TEST} @ ${SHA_TO_TEST}</title>
-</head>
-<body>
-<div class="main">
-
-<h1>AST Fuzzer for PR <a href="https://github.com/ClickHouse/ClickHouse/pull/${PR_TO_TEST}">#${PR_TO_TEST}</a> @ ${SHA_TO_TEST}</h1>
-<p class="links">
-  <a href="run.log">run.log</a>
-  <a href="fuzzer.log.zst">fuzzer.log.zst</a>
-  <a href="server.log.zst">server.log.zst</a>
-  <a href="stderr.log">stderr.log</a>
-  <a href="main.log">main.log</a>
-  <a href="dmesg.log">dmesg.log</a>
-  ${CORE_LINK}
-  ${FATAL_LINK}
-</p>
-<table>
-<tr>
-  <th>Test name</th>
-  <th>Test status</th>
-  <th>Description</th>
-</tr>
-<tr>
-  <td>AST Fuzzer</td>
-  <td>$(cat status.txt)</td>
-  <td>$(
-    clickhouse-local --input-format RawBLOB --output-format RawBLOB --query "SELECT encodeXMLComponent(*) FROM table" < description.txt || cat description.txt
-  )</td>
-</tr>
-<tr>
-  <td colspan="3" style="white-space: pre-wrap;">$(
-    clickhouse-local --input-format RawBLOB --output-format RawBLOB --query "SELECT encodeXMLComponent(*) FROM table" < fatal.log || cat fatal.log
-  )</td>
-</tr>
-</table>
-</body>
-</html>
-
-EOF
-    ;&
 esac
 
-exit $task_exit_code
+exit $server_exit_code

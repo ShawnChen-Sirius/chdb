@@ -21,6 +21,7 @@
 #include <pybind11/pytypes.h>
 #include <Poco/Logger.h>
 #include <Common/Exception.h>
+#include <Common/FunctionDocumentation.h>
 #include <Common/logger_useful.h>
 
 #if USE_JEMALLOC
@@ -155,14 +156,17 @@ ColumnsDescription TableFunctionPython::getActualTableStructure(ContextPtr conte
 void registerTableFunctionPython(TableFunctionFactory & factory)
 {
     factory.registerFunction<TableFunctionPython>(
-        {.documentation
-         = {.description = R"(
+        {
+            .description = R"(
 Passing Pandas DataFrame or Pyarrow Table to ClickHouse engine.
-For any other data structure, you can also create a table interface to a Python data source and reads data 
+For any other data structure, you can also create a table interface to a Python data source and reads data
 from a PyReader object.
 This table function requires a single argument which is a PyReader object used to read data from Python.
 )",
-            .examples = {{"1", "SELECT * FROM Python(PyReader)", ""}}}},
+            .examples = {{"python", "SELECT * FROM Python(PyReader)", ""}},
+            .category = FunctionDocumentation::Category::TableFunction,
+        },
+        {},
         TableFunctionFactory::Case::Insensitive);
 }
 

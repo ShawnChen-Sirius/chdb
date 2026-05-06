@@ -50,7 +50,7 @@ target_include_directories (clickhouse PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 # Link system iconv library on macOS for libxml2 compatibility
 if (APPLE)
-    target_link_libraries (clickhouse PRIVATE iconv)
+    target_link_libraries (clickhouse PRIVATE iconv bz2)
 endif()
 
 macro(clickhouse_program_alias alias)

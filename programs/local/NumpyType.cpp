@@ -3,6 +3,7 @@
 #include "PythonImporter.h"
 
 #include <Common/IntervalKind.h>
+#include <Common/StringUtils.h>
 #include <DataTypes/DataTypeDateTime64.h>
 #include <DataTypes/DataTypeFactory.h>
 #include <DataTypes/DataTypeInterval.h>
