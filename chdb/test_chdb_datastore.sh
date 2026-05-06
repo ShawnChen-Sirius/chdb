@@ -38,8 +38,17 @@ echo "chdb-core engine version: ${CORE_VERSION}"
 
 if [ -z "${CHDB_TAG:-}" ]; then
     echo "Resolving latest chdb release tag from GitHub..."
-    CHDB_TAG=$(curl -fsSL https://api.github.com/repos/chdb-io/chdb/releases/latest \
-        | ${PYTHON} -c "import json, sys; print(json.load(sys.stdin)['tag_name'])")
+    # Use git ls-remote (anonymous git protocol) instead of the REST API to avoid
+    # the unauthenticated 60-req/hour rate limit that frequently 403s on shared
+    # CI runner IPs.
+    CHDB_TAG=$(git ls-remote --tags --refs --sort=-v:refname \
+        https://github.com/chdb-io/chdb.git \
+        | head -n 1 \
+        | sed 's|.*refs/tags/||')
+    if [ -z "${CHDB_TAG}" ]; then
+        echo "ERROR: failed to resolve latest chdb tag via git ls-remote." >&2
+        exit 1
+    fi
 fi
 echo "Using chdb tag: ${CHDB_TAG}"
 
