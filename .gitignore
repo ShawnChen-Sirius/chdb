@@ -108,6 +108,7 @@ nbproject/*
 
 # Microsoft Visual Studio Code
 .vscode
+.devcontainer/
 
 config-preprocessed.xml
 
@@ -262,6 +263,8 @@ libchdb.so
 /examples/ml-25m
 .clickhouse/
 test.py
+
+.chdb-build-bin/
 
 # Large test data files
 data.csv

@@ -7,6 +7,7 @@
 #include <Core/Settings.h>
 #include <Core/SettingsEnums.h>
 #include <Core/ServerSettings.h>
+#include <Core/DeduplicateInsert.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <Interpreters/ApplyWithAliasVisitor.h>
 #include <Interpreters/ApplyWithSubqueryVisitor.h>
@@ -47,7 +48,12 @@
 #include <QueryPipeline/RemoteQueryExecutor.h>
 #include <Processors/Sources/RemoteSource.h>
 #include <Storages/IStorageCluster.h>
+#include <Storages/StorageSnapshot.h>
+#include <Storages/ColumnsDescription.h>
 #include <Interpreters/JoinedTables.h>
+#include <IO/WriteBufferFromString.h>
+#include <Interpreters/ExpressionAnalyzer.h>
+#include <Interpreters/TreeRewriter.h>
 
 #include <memory>
 
@@ -60,7 +66,6 @@ namespace Setting
     extern const SettingsBool distributed_foreground_insert;
     extern const SettingsBool insert_null_as_default;
     extern const SettingsBool optimize_trivial_insert_select;
-    extern const SettingsBool insert_deduplicate;
     extern const SettingsDeduplicateInsertSelectMode deduplicate_insert_select;
     extern const SettingsMaxThreads max_threads;
     extern const SettingsUInt64 max_insert_threads;
@@ -90,12 +95,12 @@ namespace MergeTreeSetting
 namespace ServerSetting
 {
     extern const ServerSettingsBool disable_insertion_and_mutation;
+    extern const ServerSettingsInsertDeduplicationVersions insert_deduplication_version;
 }
 
 namespace ErrorCodes
 {
     extern const int NOT_IMPLEMENTED;
-    extern const int DEDUPLICATION_IS_NOT_POSSIBLE;
     extern const int NO_SUCH_COLUMN_IN_TABLE;
     extern const int ILLEGAL_COLUMN;
     extern const int DUPLICATE_COLUMN;
@@ -123,7 +128,6 @@ InterpreterInsertQuery::InterpreterInsertQuery(
     max_threads = std::max<size_t>(1, settings[Setting::max_threads]);
     max_insert_threads = std::min(std::max<size_t>(1, settings[Setting::max_insert_threads]), max_threads);
 }
-
 
 StoragePtr InterpreterInsertQuery::getTable(ASTInsertQuery & query)
 {
@@ -432,44 +436,14 @@ QueryPipeline InterpreterInsertQuery::addInsertToSelectPipeline(ASTInsertQuery &
     if (select_streams != 1)
         pipeline.resize(1);
 
-    auto deduplicate_insert_select = [&] () -> bool
-    {
-        switch (context->getSettingsRef()[Setting::deduplicate_insert_select].value)
-        {
-            case DeduplicateInsertSelectMode::FORCE_ENABLE:
-                return true;
-            case DeduplicateInsertSelectMode::DISABLE:
-                return false;
-            case DeduplicateInsertSelectMode::ENABLE_EVEN_FOR_BAD_QUERIES:
-                return context->getSettingsRef()[Setting::insert_deduplicate];
-            case DeduplicateInsertSelectMode::ENABLE_WHEN_POSSIBLE:
-            {
-                if (!select_query_sorted && context->getSettingsRef()[Setting::insert_deduplicate])
-                    LOG_INFO(logger, "INSERT SELECT deduplication is disabled because SELECT is not stable");
+    auto deduplicate_insert_select = isDeduplicationEnabledForInsertSelect(
+        select_query_sorted, context->getSettingsRef(),
+        context->getSettingsRef()[Setting::insert_deduplication_token].value, logger);
 
-                return select_query_sorted && context->getSettingsRef()[Setting::insert_deduplicate];
-            }
-        }
-    }();
-
-    if (!select_query_sorted && deduplicate_insert_select)
-    {
-        if (context->getSettingsRef()[Setting::deduplicate_insert_select] == DeduplicateInsertSelectMode::FORCE_ENABLE)
-            throw Exception(ErrorCodes::DEDUPLICATION_IS_NOT_POSSIBLE,
-                "Deduplication for INSERT SELECT with non-stable SELECT is not possible"
-                " (the SELECT part can return different results on each execution)."
-                " You can disable it by setting 'insert_deduplicate' or `async_insert_deduplicate` to 0."
-                " Or make SELECT query stable (for example, by adding ORDER BY all to the query).");
-
-        chassert(context->getSettingsRef()[Setting::deduplicate_insert_select] == DeduplicateInsertSelectMode::ENABLE_EVEN_FOR_BAD_QUERIES);
-        LOG_INFO(logger, "INSERT SELECT deduplication is enabled in compatibility mode, but SELECT is not stable. "
-            "The deduplication may not work as expected because the SELECT part can return different results on each execution.");
-    }
-
-    if (deduplicate_insert_select != bool(context->getSettingsRef()[Setting::insert_deduplicate]))
+    if (deduplicate_insert_select != isDeduplicationEnabledForInsert(false, context->getSettingsRef()))
     {
         auto tmp_context = Context::createCopy(context);
-        tmp_context->setSetting("insert_deduplicate", Field{deduplicate_insert_select});
+        overrideDeduplicationSetting(deduplicate_insert_select, tmp_context);
         context = tmp_context;
     }
 
@@ -484,6 +458,7 @@ QueryPipeline InterpreterInsertQuery::addInsertToSelectPipeline(ASTInsertQuery &
             insert_dependencies,
             insert_dependencies->getRootViewID(),
             context->getSettingsRef()[Setting::insert_deduplication_token].value,
+            context->getServerSettings()[ServerSetting::insert_deduplication_version].value,
             in_header);
     });
 
@@ -628,10 +603,9 @@ QueryPipeline InterpreterInsertQuery::buildInsertSelectPipeline(ASTInsertQuery &
 }
 
 
-std::pair<QueryPipeline, ParallelReplicasReadingCoordinatorPtr>
-InterpreterInsertQuery::buildLocalInsertSelectPipelineForParallelReplicas(ASTInsertQuery & query, const StoragePtr & table)
+std::pair<QueryPipeline, ParallelReplicasReadingCoordinatorPtr> InterpreterInsertQuery::buildLocalInsertSelectPipelineForParallelReplicas(
+    ASTInsertQuery & query, const StoragePtr & table, ContextPtr select_context)
 {
-    ContextPtr select_context = getContext();
     applyTrivialInsertSelectOptimization(query, table->prefersLargeBlocks(), select_context);
 
     auto [pipeline_builder, coordinator]
@@ -683,15 +657,20 @@ static bool isInsertSelectTrivialEnoughForDistributedExecution(const ASTInsertQu
 
 std::optional<QueryPipeline> InterpreterInsertQuery::buildInsertSelectPipelineParallelReplicas(ASTInsertQuery & query, StoragePtr table)
 {
-    auto context_ptr = getContext();
-    const Settings & settings = context_ptr->getSettingsRef();
+    const Settings & settings = getContext()->getSettingsRef();
     if (!settings[Setting::allow_experimental_analyzer])
         return {};
 
-    if (!context_ptr->canUseParallelReplicasOnInitiator())
+    if (settings[Setting::parallel_distributed_insert_select] != 2)
         return {};
 
-    if (settings[Setting::parallel_distributed_insert_select] != 2)
+    /// Create a context with automatic_parallel_replicas_mode disabled upfront.
+    /// INSERT SELECT should use parallel replicas regardless of automatic mode,
+    /// and followers need automatic_parallel_replicas_mode == 0 to participate in coordinated reading.
+    auto context = Context::createCopy(getContext());
+    context->setSetting("automatic_parallel_replicas_mode", Field{0});
+
+    if (!context->canUseParallelReplicasOnInitiator())
         return {};
 
     // NOTE: should we limit it more here?
@@ -702,18 +681,18 @@ std::optional<QueryPipeline> InterpreterInsertQuery::buildInsertSelectPipelinePa
         return {};
 
     auto select = query.select->as<ASTSelectWithUnionQuery &>().list_of_selects->children.front();
-    if (!ClusterProxy::isSuitableForParallelReplicas(select, context_ptr))
+    if (!ClusterProxy::isSuitableForInsertSelectWithParallelReplicas(select, context))
         return {};
 
     LOG_TRACE(logger, "Building distributed insert select pipeline with parallel replicas: table={}", query.getTable());
 
     if (settings[Setting::parallel_replicas_local_plan] && settings[Setting::parallel_replicas_insert_select_local_pipeline])
     {
-        auto [local_pipeline, coordinator] = buildLocalInsertSelectPipelineForParallelReplicas(query, table);
-        return ClusterProxy::executeInsertSelectWithParallelReplicas(query, context_ptr, std::move(local_pipeline), coordinator);
+        auto [local_pipeline, coordinator] = buildLocalInsertSelectPipelineForParallelReplicas(query, table, context);
+        return ClusterProxy::executeInsertSelectWithParallelReplicas(query, context, std::move(local_pipeline), coordinator);
     }
 
-    return ClusterProxy::executeInsertSelectWithParallelReplicas(query, context_ptr);
+    return ClusterProxy::executeInsertSelectWithParallelReplicas(query, context);
 }
 
 
@@ -774,6 +753,7 @@ QueryPipeline InterpreterInsertQuery::buildInsertPipeline(ASTInsertQuery & query
             insert_dependencies,
             insert_dependencies->getRootViewID(),
             settings[Setting::insert_deduplication_token].value,
+            context->getServerSettings()[ServerSetting::insert_deduplication_version].value,
             chain.getInputSharedHeader()));
 
     auto counting = std::make_shared<CountingTransform>(chain.getInputSharedHeader(), context->getQuota());
@@ -800,7 +780,6 @@ QueryPipeline InterpreterInsertQuery::buildInsertPipeline(ASTInsertQuery & query
     return pipeline;
 }
 
-
 std::optional<QueryPipeline> InterpreterInsertQuery::distributedWriteIntoReplicatedMergeTreeOrDataLakeFromClusterStorage(
     const ASTInsertQuery & query, ContextPtr local_context)
 {
@@ -813,15 +792,17 @@ std::optional<QueryPipeline> InterpreterInsertQuery::distributedWriteIntoReplica
 
     auto & select = query.select->as<ASTSelectWithUnionQuery &>();
     StoragePtr src_storage;
+    const ASTSelectQuery * select_query = nullptr;
     if (select.list_of_selects->children.size() == 1)
     {
-        if (auto * select_query = select.list_of_selects->children.at(0)->as<ASTSelectQuery>())
+        if (auto * sq = select.list_of_selects->children.at(0)->as<ASTSelectQuery>())
         {
+            select_query = sq;
             if (local_context->getSettingsRef()[Setting::enable_global_with_statement])
                 ApplyWithAliasVisitor::visit(select.list_of_selects->children.at(0));
             ApplyWithSubqueryVisitor(local_context).visit(select.list_of_selects->children.at(0));
 
-            JoinedTables joined_tables(Context::createCopy(local_context), *select_query);
+            JoinedTables joined_tables(Context::createCopy(local_context), *sq);
             if (joined_tables.tablesCount() == 1)
                 src_storage = joined_tables.getLeftTableStorage();
         }
@@ -864,8 +845,44 @@ std::optional<QueryPipeline> InterpreterInsertQuery::distributedWriteIntoReplica
     query_context->setSetting("skip_unavailable_shards", true);
 
     src_storage_cluster->updateExternalDynamicMetadataIfExists(local_context);
-    auto extension = src_storage_cluster->getTaskIteratorExtension(
-        nullptr, nullptr, local_context, src_cluster, src_storage_cluster->getInMemoryMetadataPtr());
+
+    std::optional<ActionsDAG> filter_dag;
+    const ActionsDAG::Node * predicate = nullptr;
+    if (select_query)
+    {
+        ASTPtr condition_ast;
+        if (select_query->prewhere() && select_query->where())
+            condition_ast = makeASTOperator("and", select_query->prewhere()->clone(), select_query->where()->clone());
+        else if (select_query->prewhere())
+            condition_ast = select_query->prewhere()->clone();
+        else if (select_query->where())
+            condition_ast = select_query->where()->clone();
+
+        if (condition_ast)
+        {
+            try
+            {
+                const auto metadata = src_storage_cluster->getInMemoryMetadataPtr();
+                const auto snapshot = src_storage_cluster->getStorageSnapshot(metadata, local_context);
+                const auto columns = snapshot->getColumns(GetColumnsOptions(GetColumnsOptions::All).withVirtuals());
+                auto syntax = TreeRewriter(local_context).analyze(condition_ast, columns);
+                filter_dag = ExpressionAnalyzer(condition_ast, syntax, local_context).getActionsDAG(true, true);
+                predicate = filter_dag->getOutputs().at(0);
+            }
+            catch (...)
+            {
+                /// Filter extraction is best-effort: if DAG construction fails for any reason
+                /// (e.g. the predicate references columns or functions not available in this
+                /// isolated analysis pass), silently fall back to no pruning so the query
+                /// still executes correctly.
+                tryLogCurrentException(logger, "Failed to build filter DAG for partition pruning in INSERT ... SELECT; continuing without pruning");
+                filter_dag.reset();
+                predicate = nullptr;
+            }
+        }
+    }
+     auto extension = src_storage_cluster->getTaskIteratorExtension(
+        predicate, filter_dag ? &*filter_dag : nullptr, local_context, src_cluster, src_storage_cluster->getInMemoryMetadataPtr());
 
     /// -Cluster storage treats each replicas as a shard in cluster definition
     /// so, it's enough to consider only shards here
@@ -954,6 +971,9 @@ BlockIO InterpreterInsertQuery::execute()
     {
         if (settings[Setting::parallel_distributed_insert_select])
         {
+            /// distributed write paths may mutate the SELECT AST (CTE expansion), so keep a backup
+            auto saved_select = query.select->clone();
+
             auto distributed = table->distributedWrite(query, context);
             if (distributed)
             {
@@ -964,12 +984,14 @@ BlockIO InterpreterInsertQuery::execute()
                 if (auto pipeline = distributedWriteIntoReplicatedMergeTreeOrDataLakeFromClusterStorage(query, context); pipeline)
                     res.pipeline = std::move(*pipeline);
             }
-            if (!res.pipeline.initialized() && context->canUseParallelReplicasOnInitiator())
+            if (!res.pipeline.initialized())
             {
                 auto pipeline = buildInsertSelectPipelineParallelReplicas(query, table);
                 if (pipeline)
                     res.pipeline = std::move(*pipeline);
             }
+
+            query.select = std::move(saved_select);
         }
         if (!res.pipeline.initialized())
             res.pipeline = buildInsertSelectPipeline(query, table);
@@ -1028,7 +1050,7 @@ void InterpreterInsertQuery::setInsertContextValues(StoragePtr table)
         insert_columns = std::move(names);
     }
 
-    getContext()->setInsertionTable(insert_query.table_id, insert_columns, table->getInMemoryMetadataPtr()->columns);
+    getContext()->setInsertionTable(insert_query.table_id, insert_columns, std::make_shared<ColumnsDescription>(table->getInMemoryMetadataPtr()->columns));
 }
 
 void registerInterpreterInsertQuery(InterpreterFactory & factory)

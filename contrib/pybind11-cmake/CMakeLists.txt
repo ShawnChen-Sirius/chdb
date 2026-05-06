@@ -69,6 +69,12 @@ if (OS_LINUX AND Python_VERSION_MAJOR EQUAL 3 AND Python_VERSION_MINOR EQUAL 8)
     target_compile_options(pybind11_stubs PRIVATE -w -idirafter /usr/include -include crypt.h)
 endif()
 
+# Python headers are pulled from the host system; suppress the cross-compilation
+# poisoned-directories warning since the multiarch pyconfig.h is resolved via sysroot symlink.
+if (OS_LINUX)
+    target_compile_options(pybind11_stubs PRIVATE -Wno-poison-system-directories)
+endif()
+
 set_target_properties(pybind11_stubs PROPERTIES
     OUTPUT_NAME "pybind11nonlimitedapi_stubs"
 )
@@ -105,6 +111,9 @@ message(STATUS "Resulting LIBNAME: ${PYBIND11_NONLIMITEDAPI_LIBNAME}")
 if(Python_FOUND OR CHDB_CROSSCOMPILING)
     target_include_directories(${PYBIND11_NONLIMITEDAPI_LIBNAME} PRIVATE ${PYBIND11_INCLUDE_DIR})
     target_include_directories(${PYBIND11_NONLIMITEDAPI_LIBNAME} PRIVATE ${Python_INCLUDE_DIRS})
+    if (OS_LINUX)
+        target_compile_options(${PYBIND11_NONLIMITEDAPI_LIBNAME} PRIVATE -Wno-poison-system-directories)
+    endif()
     target_link_libraries(${PYBIND11_NONLIMITEDAPI_LIBNAME} PUBLIC ch_contrib::pybind11_stubs)
 
     if (USE_MUSL AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")

@@ -71,7 +71,7 @@ CCTOOLS_BIN="${CCTOOLS_INSTALL_DIR}/bin"
 
 # Override tools with cross-compilation versions from cctools
 # export STRIP="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-strip"
-export STRIP="llvm-strip-19"
+export STRIP="llvm-strip-21"
 export AR="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-ar"
 export NM="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-nm"
 export LDD="${CCTOOLS_BIN}/${DARWIN_TRIPLE}-otool -L"
@@ -84,8 +84,8 @@ echo "  LDD: ${LDD}"
 
 BUILD_DIR=${PROJ_DIR}/build-${BUILD_DIR_SUFFIX}
 
-export CC=clang-19
-export CXX=clang++-19
+export CC=clang-21
+export CXX=clang++-21
 
 RUST_FEATURES="-DENABLE_RUST=0"
 GLIBC_COMPATIBILITY="-DGLIBC_COMPATIBILITY=0"
@@ -124,7 +124,7 @@ CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} \
     -DENABLE_CLIENT_AI=1 \
     ${MYSQL} \
     ${HDFS} \
-    -DENABLE_LIBRARIES=0 ${RUST_FEATURES} \
+    -DENABLE_LIBRARIES=0 -DENABLE_SQIDS=1 ${RUST_FEATURES} \
     ${GLIBC_COMPATIBILITY} \
     -DENABLE_UTILS=0 ${LLVM} ${UNWIND} \
     ${ICU} -DENABLE_UTF8PROC=1 ${JEMALLOC} \
