@@ -37,6 +37,52 @@ extract_into_parent_list(clickhouse_dictionaries_headers dbms_headers
     getDictionaryConfigurationFromAST.h
 )
 
+option(CHDB_TRIM_HEAVY_DICTIONARIES "Drop heavy hashed/sparse_hashed/hashed_array/range_hashed/polygon/cache/direct dictionary backends" OFF)
+if (CHDB_TRIM_HEAVY_DICTIONARIES)
+    message(STATUS "CHDB_TRIM_HEAVY_DICTIONARIES: dropping Hashed/SparseHashed/HashedArray/RangeHashed/Polygon/Cache/Direct dictionaries")
+    foreach (_drop
+        HashedDictionary.cpp
+        SparseHashedDictionary.cpp
+        HashedArrayDictionary.cpp
+        registerHashedDictionary.cpp
+        RangeHashedDictionary.cpp
+        RangeHashedDictionaryComplex.cpp
+        RangeHashedDictionarySimple.cpp
+        RangeHashedDictionaryGetItemsImplDecimal.cpp
+        RangeHashedDictionaryGetItemsImplFloat.cpp
+        RangeHashedDictionaryGetItemsImplInt.cpp
+        RangeHashedDictionaryGetItemsImplOthers.cpp
+        RangeHashedDictionaryGetItemsImplUInt.cpp
+        RangeHashedDictionaryGetItemsShortCircuitImplDecimal.cpp
+        RangeHashedDictionaryGetItemsShortCircuitImplFloat.cpp
+        RangeHashedDictionaryGetItemsShortCircuitImplInt.cpp
+        RangeHashedDictionaryGetItemsShortCircuitImplOthers.cpp
+        RangeHashedDictionaryGetItemsShortCircuitImplUInt.cpp
+        registerRangeHashedDictionary.cpp
+        PolygonDictionary.cpp
+        PolygonDictionaryImplementations.cpp
+        PolygonDictionaryUtils.cpp
+        CacheDictionary.cpp
+        CacheDictionaryUpdateQueue.cpp
+        registerCacheDictionaries.cpp
+        DirectDictionary.cpp)
+        list(REMOVE_ITEM clickhouse_dictionaries_sources "${_drop}" "./${_drop}")
+    endforeach()
+    set(_chdb_dict_stub "${CMAKE_CURRENT_BINARY_DIR}/chdbDictionaryStubs.cpp")
+    file(WRITE "${_chdb_dict_stub}"
+        "// chdb stubs: heavy dictionary backends dropped via CHDB_TRIM_HEAVY_DICTIONARIES.\n"
+        "// CREATE DICTIONARY ... LAYOUT(hashed|sparse_hashed|complex_key_hashed|hashed_array|range_hashed|polygon|cache|direct|...) will not be available.\n"
+        "namespace DB { class DictionaryFactory; "
+        "void registerDictionaryHashed(DictionaryFactory &) {} "
+        "void registerDictionaryArrayHashed(DictionaryFactory &) {} "
+        "void registerDictionaryRangeHashed(DictionaryFactory &) {} "
+        "void registerDictionaryPolygon(DictionaryFactory &) {} "
+        "void registerDictionaryCache(DictionaryFactory &) {} "
+        "void registerDictionaryDirect(DictionaryFactory &) {} "
+        "}\n")
+    list(APPEND clickhouse_dictionaries_sources "${_chdb_dict_stub}")
+endif()
+
 add_library(clickhouse_dictionaries ${clickhouse_dictionaries_headers} ${clickhouse_dictionaries_sources})
 
 target_link_libraries(clickhouse_dictionaries

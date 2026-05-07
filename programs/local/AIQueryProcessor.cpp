@@ -110,6 +110,8 @@ std::string AIQueryProcessor::generateSQL(const std::string & prompt)
 
 #else
 
+namespace DB { class AISQLGenerator { }; }  // stub so unique_ptr deleter has a complete type
+
 AIQueryProcessor::AIQueryProcessor(chdb_connection *, const DB::AIConfiguration &) : connection(nullptr) { }
 AIQueryProcessor::~AIQueryProcessor() = default;
 std::string AIQueryProcessor::executeQueryForAI(const std::string &) { return {}; }

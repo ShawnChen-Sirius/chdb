@@ -121,7 +121,9 @@ void registerStorages()
     registerStorageNull(factory);
     registerStorageMerge(factory);
     registerStorageBuffer(factory);
+#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
     registerStorageDistributed(factory);
+#endif
     registerStorageMemory(factory);
     registerStorageFile(factory);
     registerStorageURL(factory);
@@ -132,7 +134,9 @@ void registerStorages()
     registerStorageMaterializedView(factory);
     registerStorageGenerateRandom(factory);
     registerStorageExecutable(factory);
+#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
     registerStorageWindowView(factory);
+#endif
     registerStorageLoop(factory);
     registerStorageFuzzQuery(factory);
     registerStorageTimeSeries(factory);
@@ -212,7 +216,9 @@ void registerStorages()
     registerStorageSQLite(factory);
 #endif
 
+#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
     registerStorageKeeperMap(factory);
+#endif
 
     registerStorageObjectStorage(factory);
 }

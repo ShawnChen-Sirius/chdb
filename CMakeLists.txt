@@ -171,7 +171,8 @@ if (OS_LINUX)
     # We should not export dynamic symbols, because:
     # - The main clickhouse binary does not use dlopen,
     #   and whatever is poisoning it by LD_PRELOAD should not link to our symbols.
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-export-dynamic -Wl,--gc-sections")
+    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-export-dynamic -Wl,--gc-sections -Wl,--icf=safe")
+    set (CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--icf=safe")
 endif ()
 
 if (OS_DARWIN)
@@ -255,7 +256,14 @@ if (NOT OS_DARWIN)
     # Asynchronous unwind tables are needed for Query Profiler.
     # They are already by default on some platforms but possibly not on all platforms.
     # Enable it explicitly.
-    set (COMPILER_FLAGS "${COMPILER_FLAGS} -fasynchronous-unwind-tables")
+    if (CHDB_TRIM_UNWIND_TABLES)
+        # chdb embedded build: query profiler is not used, drop async unwind tables
+        # to shrink .eh_frame by several MB. C++ exception handling still works
+        # via .eh_frame entries that compiler emits for functions that throw.
+        set (COMPILER_FLAGS "${COMPILER_FLAGS} -fno-asynchronous-unwind-tables")
+    else()
+        set (COMPILER_FLAGS "${COMPILER_FLAGS} -fasynchronous-unwind-tables")
+    endif()
 endif()
 
 # Reproducible builds.
@@ -308,6 +316,12 @@ endif()
 set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffp-contract=off")
 
 set (COMPILER_FLAGS "${COMPILER_FLAGS} -fPIC")
+
+if (CHDB_TRIM_FUNCTION_SECTIONS)
+    # Place each function/datum in its own section so the linker's --gc-sections can
+    # remove unreferenced ones (otherwise dead code in the same TU as live code is kept).
+    set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffunction-sections -fdata-sections")
+endif()
 
 set (DEBUG_INFO_FLAGS "-g")
 if (DISABLE_ALL_DEBUG_SYMBOLS)

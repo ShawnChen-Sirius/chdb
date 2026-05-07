@@ -3,12 +3,22 @@ import sys
 import re
 import subprocess
 import sysconfig
+import zipfile
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 import setuptools
 from distutils import log
 
 log.set_verbosity(log.DEBUG)
+
+# chdb wheel size optimization: use deflate level 9 instead of default level 6.
+# This shaves ~0.3 MB off the wheel for free (no functional change).
+_orig_zipfile_init = zipfile.ZipFile.__init__
+def _chdb_zipfile_init(self, *args, **kwargs):
+    if kwargs.get("compression", zipfile.ZIP_STORED) == zipfile.ZIP_DEFLATED and "compresslevel" not in kwargs:
+        kwargs["compresslevel"] = 9
+    _orig_zipfile_init(self, *args, **kwargs)
+zipfile.ZipFile.__init__ = _chdb_zipfile_init
 
 
 def get_python_ext_suffix():

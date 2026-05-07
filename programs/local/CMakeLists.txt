@@ -101,10 +101,13 @@ set (CLICKHOUSE_LOCAL_LINK
         clickhouse_parsers
         clickhouse_storages_system
         clickhouse_table_functions
-        ch_contrib::parquet
 )
 
 clickhouse_program_add(local)
+
+if (TARGET ch_contrib::parquet)
+    target_link_libraries(clickhouse-local-lib PRIVATE ch_contrib::parquet)
+endif()
 
 if (USE_PYTHON)
     target_include_directories(clickhouse-local-lib PRIVATE

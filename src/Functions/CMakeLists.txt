@@ -3,6 +3,123 @@ add_subdirectory(divide)
 include("${ClickHouse_SOURCE_DIR}/cmake/dbms_glob_sources.cmake")
 add_headers_and_sources(clickhouse_functions .)
 
+option(CHDB_TRIM_BIG_TYPES "Drop Int128/Int256/UInt128/UInt256/Decimal128/Decimal256/BFloat16 from comparison/arithmetic template instantiation matrices" OFF)
+if (CHDB_TRIM_BIG_TYPES)
+    add_compile_definitions(CHDB_TRIM_BIG_TYPES=1)
+endif()
+
+option(CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS "Drop heavy niche scalar functions (polygons, NumericIndexedVector, etc.)" OFF)
+if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
+    message(STATUS "CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS: dropping niche heavy scalar functions")
+    set(_chdb_drop_funcs
+        # Polygon family - heavy boost::geometry templates, niche
+        pointInPolygon.cpp
+        polygonArea.cpp
+        polygonConvexHull.cpp
+        polygonPerimeter.cpp
+        polygonsDistance.cpp
+        polygonsEquals.cpp
+        polygonsIntersect.cpp
+        polygonsIntersection.cpp
+        polygonsSymDifference.cpp
+        polygonsUnion.cpp
+        polygonsWithin.cpp
+        readWktPolygon.cpp
+        readWktMultiPolygon.cpp
+        readWktLineString.cpp
+        readWktMultiLineString.cpp
+        readWktPoint.cpp
+        readWktRing.cpp
+        # NumericIndexedVector functions (sparse vector ops, niche)
+        FunctionsNumericIndexedVector.cpp
+        # Geographic (uses S2/H3)
+        geoToS2.cpp
+        s2ToGeo.cpp
+        # Niche string formatting / encoding
+        formatRow.cpp
+        formatRowNoNewline.cpp
+        formatReadableQuantity.cpp
+        formatReadableTimeDelta.cpp
+        # Niche arithmetic helpers
+        avg2.cpp
+        midpoint.cpp
+        # ULID (rarely used)
+        generateULID.cpp
+        ULIDStringToDateTime.cpp
+        # Niche
+        FunctionFromUnixTimestamp64.cpp
+        widthBucket.cpp
+        bitTestAny.cpp
+        bitTestAll.cpp
+        # IS [NOT] DISTINCT FROM — niche null-safe equality, big templated
+        isDistinctFrom.cpp
+        isNotDistinctFrom.cpp
+        # OrZero / OrNull arithmetic variants
+        intDivOrZero.cpp
+        intDivOrNull.cpp
+        moduloOrZero.cpp
+        moduloOrNull.cpp
+        positiveModuloOrNull.cpp
+        # Niche hash functions: keep Misc (it has cityHash64, xxHash, MD5, sipHash...)
+        # Drop only the truly niche RIPEMD/SSL ones
+        FunctionsHashingRipe.cpp
+        FunctionsHashingSSL.cpp
+        # Niche string / encoding
+        ascii.cpp
+        soundex.cpp
+        stem.cpp
+        wkt.cpp
+        readWkt.cpp
+        # Vector / array distance (mostly used in vector search)
+        arrayDistance.cpp
+        arrayDotProduct.cpp
+        arrayNorm.cpp
+        arrayJaccardIndex.cpp
+        arrayLevenshtein.cpp
+        arrayShingles.cpp
+        arrayShiftRotate.cpp
+        arrayCumSum.cpp
+        arrayCumSumNonNegative.cpp
+        arrayDifference.cpp
+        arrayFold.cpp
+        arrayAUC.cpp
+        arrayRandomSample.cpp
+        arrayShuffle.cpp
+        arrayEnumerateDense.cpp
+        arrayEnumerateDenseRanked.cpp
+        arrayEnumerateUniqRanked.cpp
+        # Map ops (niche)
+        mapPopulateSeries.cpp
+        mapOp.cpp
+        # niche
+        bitHammingDistance.cpp
+        FunctionsBitToArray.cpp
+        formatQuery.cpp
+        domainWithoutWWW.cpp
+        cutQueryStringAndFragment.cpp
+        cutToFirstSignificantSubdomainCustom.cpp
+        cutFragment.cpp
+        cutQueryString.cpp
+        cutToFirstSignificantSubdomain.cpp
+        cutURLParameter.cpp
+        cutWWW.cpp
+        normalizeQuery.cpp
+        normalizedQueryHash.cpp
+        validateNestedArraySizes.cpp
+        evalMLMethod.cpp
+        decodeHTMLComponent.cpp
+        encodeXMLComponent.cpp
+        decodeXMLComponent.cpp
+        timeSlots.cpp
+        # Dictionary lookup functions: useful only with dictionaries (already trimmed); fail clearly when called.
+        FunctionsExternalDictionaries.cpp
+        FunctionDictGetKeys.cpp
+    )
+    foreach (f IN LISTS _chdb_drop_funcs)
+        list(REMOVE_ITEM clickhouse_functions_sources ${f})
+    endforeach()
+endif()
+
 option(CHDB_MINIMAL_FUNCTIONS "Build with minimal SQL functions for chdb" OFF)
 
 if (CHDB_MINIMAL_FUNCTIONS)
@@ -21,7 +138,6 @@ if (CHDB_MINIMAL_FUNCTIONS)
         "${CMAKE_CURRENT_SOURCE_DIR}/checkHyperscanRegexp.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/CastOverloadResolver.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl0.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl1.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl2.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl3.cpp"
@@ -39,6 +155,10 @@ if (CHDB_MINIMAL_FUNCTIONS)
         "${CMAKE_CURRENT_SOURCE_DIR}/lessOrEquals.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/greater.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/greaterOrEquals.cpp"
+        # Arithmetic functions (needed for `SELECT 1+1` etc.)
+        "${CMAKE_CURRENT_SOURCE_DIR}/plus.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/minus.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/multiply.cpp"
     )
 endif()
 
