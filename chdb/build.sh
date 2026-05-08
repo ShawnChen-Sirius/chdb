@@ -142,7 +142,7 @@ rm -f ${BINARY}
 
 cd ${BUILD_DIR}
 ninja -d keeprsp -v > build.log || true
-USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+USING_RESPONSE_FILE=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
 
 if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
     if [ -f CMakeFiles/clickhouse.rsp ]; then
@@ -153,7 +153,7 @@ if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
     fi
 fi
 
-LIBCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
+LIBCHDB_CMD=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log \
     | sed "s/-o programs\/clickhouse/-fPIC -shared -o ${LIBCHDB_SO}/" \
     | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
     | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
@@ -207,7 +207,7 @@ ninja -d keeprsp || true
 cd ${BUILD_DIR}
 ninja -d keeprsp -v > build.log || true
 
-USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+USING_RESPONSE_FILE=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
 
 if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
     if [ -f CMakeFiles/clickhouse.rsp ]; then
@@ -219,7 +219,7 @@ if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
 fi
 
 # extract the command to generate CHDB_PY_MODULE
-PYCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
+PYCHDB_CMD=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log \
     | sed "s/-o programs\/clickhouse/-fPIC -Wl,-undefined,dynamic_lookup -shared -o ${CHDB_PY_MODULE}/" \
     | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
     | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
