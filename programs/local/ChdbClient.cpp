@@ -10,6 +10,7 @@
 #include <chdb-internal.h>
 #include <Poco/Net/SocketAddress.h>
 #include <Common/Config/ConfigHelper.h>
+#include <Common/CurrentThread.h>
 #include <Common/Exception.h>
 
 #if USE_PYTHON

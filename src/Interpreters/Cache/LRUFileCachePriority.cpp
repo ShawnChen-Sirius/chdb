@@ -89,12 +89,14 @@ IFileCachePriority::IteratorPtr LRUFileCachePriority::add( /// NOLINT
     KeyMetadataPtr key_metadata,
     size_t offset,
     size_t size,
-    const UserInfo &,
     const CachePriorityGuard::WriteLock & lock,
     const CacheStateGuard::Lock * state_lock,
     bool)
 {
-    return std::make_shared<LRUIterator>(add(std::make_shared<Entry>(key_metadata->key, offset, size, key_metadata), lock, state_lock));
+    return std::make_shared<LRUIterator>(add(
+        std::make_shared<Entry>(key_metadata->key, offset, size, key_metadata),
+        lock,
+        state_lock));
 }
 
 LRUFileCachePriority::LRUIterator LRUFileCachePriority::add(
@@ -229,8 +231,18 @@ LRUFileCachePriority::iterateImpl(
             {
                 case Entry::State::Active:
                 {
-                    /// TODO: Inroduce a separate pre-Active state for zero size valid entries
+                    /// A newly added entry may have size 0 before the first
+                    /// space reservation completes. It is not yet evictable.
                     return entry.size > 0;
+                }
+                case Entry::State::PreActive:
+                {
+                    /// Entry is being moved between SLRU queues. Size may already be
+                    /// non-zero, but the entry is not evictable until `SLRUIterator::setIterator`
+                    /// transitions it to Active atomically with the iterator pointer update.
+                    /// For SLRU transitions `size > 0` alone is not a sufficient guard, because
+                    /// the SLRUIterator might still point to the old entry.
+                    return false;
                 }
                 case Entry::State::Invalidated:
                 {
@@ -322,6 +334,7 @@ bool LRUFileCachePriority::canFit( /// NOLINT
     size_t elements,
     const CacheStateGuard::Lock & lock,
     IteratorPtr,
+    const OriginInfo &,
     bool) const
 {
     return canFit(size, elements, 0, 0, lock);
@@ -349,16 +362,15 @@ EvictionInfoPtr LRUFileCachePriority::collectEvictionInfo(
     size_t elements,
     IFileCachePriority::Iterator *,
     bool is_total_space_cleanup,
-    bool is_dynamic_resize,
-    const IFileCachePriority::UserInfo & user_info,
+    const IFileCachePriority::OriginInfo & origin_info,
     const CacheStateGuard::Lock & lock)
 {
-    auto info = std::make_unique<QueueEvictionInfo>(description, user_info.user_id);
+    auto info = std::make_unique<QueueEvictionInfo>(description, origin_info.user_id);
     if (!size && !elements)
         return std::make_unique<EvictionInfo>(queue_id, std::move(info));
 
     /// Total space cleanup is for keep_free_space_size(elements)_ratio feature.
-    if (is_total_space_cleanup || is_dynamic_resize)
+    if (is_total_space_cleanup)
     {
         info->size_to_evict = std::min(size, getSize(lock));
         info->elements_to_evict = std::min(elements, getElementsCount(lock));
@@ -406,7 +418,7 @@ bool LRUFileCachePriority::collectCandidatesForEviction(
     bool continue_from_last_eviction_pos,
     size_t max_candidates_size,
     bool /* is_total_space_cleanup */,
-    const UserInfo &,
+    const OriginInfo &,
     CachePriorityGuard & cache_guard,
     CacheStateGuard &)
 {
@@ -538,7 +550,7 @@ IFileCachePriority::PriorityDumpPtr LRUFileCachePriority::dump(const CachePriori
         res.emplace_back(FileSegment::getInfo(segment_metadata->file_segment));
         return IterationResult::CONTINUE;
     }, stat, lock);
-    return std::make_shared<LRUPriorityDump>(res);
+    return std::make_shared<IPriorityDump>(res);
 }
 
 bool LRUFileCachePriority::modifySizeLimits(
@@ -563,6 +575,23 @@ bool LRUFileCachePriority::modifySizeLimits(
     max_size = max_size_;
     max_elements = max_elements_;
     return true;
+}
+
+EvictionInfoPtr LRUFileCachePriority::collectEvictionInfoForResize(
+    size_t desired_max_size,
+    size_t desired_max_elements,
+    const OriginInfo & origin_info,
+    const CacheStateGuard::Lock & lock)
+{
+    size_t current_size = getSize(lock);
+    size_t current_elements = getElementsCount(lock);
+    size_t size_to_evict = current_size > desired_max_size ? current_size - desired_max_size : 0;
+    size_t elements_to_evict = current_elements > desired_max_elements ? current_elements - desired_max_elements : 0;
+    return collectEvictionInfo(
+        size_to_evict, elements_to_evict,
+        /* reservee */ nullptr,
+        /* is_total_space_cleanup */ true,
+        origin_info, lock);
 }
 
 bool LRUFileCachePriority::tryIncreasePriority(

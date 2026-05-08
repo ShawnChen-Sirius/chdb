@@ -16,9 +16,9 @@ RUST_FEATURES="-DENABLE_RUST=0"
 JEMALLOC="-DENABLE_JEMALLOC=0"
 LLVM="-DENABLE_EMBEDDED_COMPILER=0 -DENABLE_DWARF_PARSER=0"
 if [ "$(uname)" == "Darwin" ]; then
-    export CXX=$(brew --prefix llvm@19)/bin/clang++
-    export CC=$(brew --prefix llvm@19)/bin/clang
-    export PATH=$(brew --prefix llvm@19)/bin:$PATH
+    export CXX=$(brew --prefix llvm@21)/bin/clang++
+    export CC=$(brew --prefix llvm@21)/bin/clang
+    export PATH=$(brew --prefix llvm@21)/bin:$PATH
     GLIBC_COMPATIBILITY="-DGLIBC_COMPATIBILITY=0"
     UNWIND="-DUSE_UNWIND=0"
     HDFS="-DENABLE_HDFS=0 -DENABLE_GSASL_LIBRARY=0 -DENABLE_KRB5=0"
@@ -102,7 +102,7 @@ echo "Copied chdb.h and libchdb.a to cpp-example directory"
 # Compile example program
 echo "Compiling chdb_example.cpp..."
 if [ "$(uname)" == "Darwin" ]; then
-    CLANG_CMD="$(brew --prefix llvm@19)/bin/clang"
+    CLANG_CMD="$(brew --prefix llvm@21)/bin/clang"
     ${CLANG_CMD} chdb_example.cpp -o chdb_example -mmacosx-version-min=10.15 -L. -lchdb -liconv -framework CoreFoundation -framework Security -Wl,-map,chdb_example.map
 else
     CLANG_CMD="clang"

@@ -1,5 +1,3 @@
-#include <DataTypes/DataTypeNothing.h>
-#include <DataTypes/DataTypeNullable.h>
 #include <Common/Arena.h>
 #include <Common/HashTable/StringHashSet.h>
 #include <Common/SipHash.h>
@@ -57,6 +55,13 @@ void ColumnNullable::updateHashWithValue(size_t n, SipHash & hash) const
     hash.update(arr[n]);
     if (arr[n] == 0)
         getNestedColumn().updateHashWithValue(n, hash);
+}
+
+void ColumnNullable::updateHashWithValueRange(size_t begin, size_t end, SipHash & hash) const
+{
+    const auto & arr = getNullMapData();
+    getNestedColumn().updateHashWithValueRange(begin, end, hash);
+    hash.update(reinterpret_cast<const char *>(&arr[begin]), (end - begin) * sizeof(arr[0]));
 }
 
 WeakHash32 ColumnNullable::getWeakHash32() const
@@ -117,16 +122,16 @@ void ColumnNullable::get(size_t n, Field & res) const
         getNestedColumn().get(n, res);
 }
 
-DataTypePtr ColumnNullable::getValueNameAndTypeImpl(WriteBufferFromOwnString & name_buf, size_t n, const Options & options) const
+void ColumnNullable::getValueNameImpl(WriteBufferFromOwnString & name_buf, size_t n, const Options & options) const
 {
     if (isNullAt(n))
     {
         if (options.notFull(name_buf))
             name_buf << "NULL";
-        return std::make_shared<DataTypeNullable>(std::make_shared<DataTypeNothing>());
+        return;
     }
 
-    return getNestedColumn().getValueNameAndTypeImpl(name_buf, n, options);
+    getNestedColumn().getValueNameImpl(name_buf, n, options);
 }
 
 Float64 ColumnNullable::getFloat64(size_t n) const
@@ -823,14 +828,14 @@ namespace
 /// The following function implements a slightly more general version
 /// of getExtremes() than the implementation from Not-Null IColumns.
 /// It takes into account the possible presence of nullable values.
-void getExtremesWithNulls(const IColumn & nested_column, const NullMap & null_array, Field & min, Field & max, bool null_last = false)
+void getExtremesWithNulls(const IColumn & nested_column, const NullMap & null_array, Field & min, Field & max, size_t start, size_t end, bool null_last = false)
 {
     size_t number_of_nulls = 0;
-    size_t n = null_array.size();
+    size_t n = end - start;
     NullMap not_null_array(n);
-    for (auto i = 0ul; i < n; ++i)
+    for (size_t i = 0; i < n; ++i)
     {
-        if (null_array[i])
+        if (null_array[start + i])
         {
             ++number_of_nulls;
             not_null_array[i] = 0;
@@ -842,7 +847,7 @@ void getExtremesWithNulls(const IColumn & nested_column, const NullMap & null_ar
     }
     if (number_of_nulls == 0)
     {
-        nested_column.getExtremes(min, max);
+        nested_column.getExtremes(min, max, start, end);
     }
     else if (number_of_nulls == n)
     {
@@ -851,8 +856,9 @@ void getExtremesWithNulls(const IColumn & nested_column, const NullMap & null_ar
     }
     else
     {
-        auto filtered_column = nested_column.filter(not_null_array, -1);
-        filtered_column->getExtremes(min, max);
+        auto sub_column = nested_column.cut(start, n);
+        auto filtered_column = sub_column->filter(not_null_array, -1);
+        filtered_column->getExtremes(min, max, 0, filtered_column->size());
         if (null_last)
             max = POSITIVE_INFINITY;
     }
@@ -860,15 +866,15 @@ void getExtremesWithNulls(const IColumn & nested_column, const NullMap & null_ar
 }
 
 
-void ColumnNullable::getExtremes(Field & min, Field & max) const
+void ColumnNullable::getExtremes(Field & min, Field & max, size_t start, size_t end) const
 {
-    getExtremesWithNulls(getNestedColumn(), getNullMapData(), min, max);
+    getExtremesWithNulls(getNestedColumn(), getNullMapData(), min, max, start, end);
 }
 
 
-void ColumnNullable::getExtremesNullLast(Field & min, Field & max) const
+void ColumnNullable::getExtremesNullLast(Field & min, Field & max, size_t start, size_t end) const
 {
-    getExtremesWithNulls(getNestedColumn(), getNullMapData(), min, max, true);
+    getExtremesWithNulls(getNestedColumn(), getNullMapData(), min, max, start, end, true);
 }
 
 
@@ -986,24 +992,33 @@ ColumnPtr ColumnNullable::getNestedColumnWithDefaultOnNull() const
     return res;
 }
 
-void ColumnNullable::takeDynamicStructureFromSourceColumns(const Columns & source_columns, std::optional<size_t> max_dynamic_subcolumns)
+void ColumnNullable::chooseDynamicStructureForMerge(const Columns & source_columns, std::optional<size_t> max_dynamic_subcolumns)
 {
     Columns nested_source_columns;
     nested_source_columns.reserve(source_columns.size());
     for (const auto & source_column : source_columns)
         nested_source_columns.push_back(assert_cast<const ColumnNullable &>(*source_column).getNestedColumnPtr());
-    nested_column->takeDynamicStructureFromSourceColumns(nested_source_columns, max_dynamic_subcolumns);
+    nested_column->chooseDynamicStructureForMerge(nested_source_columns, max_dynamic_subcolumns);
 }
 
-void ColumnNullable::takeDynamicStructureFromColumn(const ColumnPtr & source_column)
+void ColumnNullable::takeExactDynamicStructureFrom(const IColumn & source)
 {
-    nested_column->takeDynamicStructureFromColumn(assert_cast<const ColumnNullable &>(*source_column).getNestedColumnPtr());
+    nested_column->takeExactDynamicStructureFrom(assert_cast<const ColumnNullable &>(source).getNestedColumn());
 }
 
 bool ColumnNullable::dynamicStructureEquals(const IColumn & rhs) const
 {
     const auto & rhs_nested_column = assert_cast<const ColumnNullable &>(rhs).getNestedColumn();
     return nested_column->dynamicStructureEquals(rhs_nested_column);
+}
+
+void ColumnNullable::takeOrCalculateStatisticsFrom(const Columns & source_columns)
+{
+    Columns nested_source_columns;
+    nested_source_columns.reserve(source_columns.size());
+    for (const auto & source_column : source_columns)
+        nested_source_columns.push_back(assert_cast<const ColumnNullable &>(*source_column).getNestedColumnPtr());
+    nested_column->takeOrCalculateStatisticsFrom(nested_source_columns);
 }
 
 ColumnPtr makeNullable(const ColumnPtr & column)

@@ -11,7 +11,6 @@ RUN apt-get update \
         curl \
         default-jre \
         g++ \
-        gdb \
         iproute2 \
         krb5-user \
         libicu-dev \
@@ -21,19 +20,18 @@ RUN apt-get update \
         lz4 \
         odbc-postgresql \
         odbcinst \
-        python3 \
         rpm2cpio \
         sqlite3 \
         tar \
         tzdata \
         unixodbc \
-        python3-pip \
         libcurl4-openssl-dev \
         libssl-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/debconf /tmp/*
 
-RUN pip3 install pycurl
+COPY requirements.txt /
+RUN python3.13 -m pip install --no-cache-dir -r requirements.txt && rm -rf /root/.cache/pip
 
 # Architecture of the image when BuildKit/buildx is used
 ARG TARGETARCH
@@ -72,3 +70,13 @@ maxClientCnxns=80' > /opt/zookeeper/conf/zoo.cfg && \
 
 ENV TZ=Etc/UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+COPY --from=clickhouse/cctools:859fb360308eb8ac47ad /opt/gdb /opt/gdb
+ENV PATH="/opt/gdb/bin:${PATH}"
+
+COPY --from=clickhouse/cctools:859fb360308eb8ac47ad \
+  /opt/openssl-fips/openssl.cnf \
+  /opt/openssl-fips/fipsmodule.cnf \
+  /opt/openssl-fips/fips.so \
+  \
+  /etc/ssl/

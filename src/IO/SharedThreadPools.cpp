@@ -1,8 +1,9 @@
-#include <Core/Field.h>
 #include <IO/SharedThreadPools.h>
 #include <Common/CurrentMetrics.h>
+#include <Common/Exception.h>
 #include <Common/ThreadPool.h>
 #include <Common/getNumberOfCPUCoresToUse.h>
+#include <Core/Field.h>
 
 namespace CurrentMetrics
 {
@@ -39,6 +40,9 @@ namespace CurrentMetrics
     extern const Metric FormatParsingThreads;
     extern const Metric FormatParsingThreadsActive;
     extern const Metric FormatParsingThreadsScheduled;
+    extern const Metric MergeTreeSnapshotCommitThreads;
+    extern const Metric MergeTreeSnapshotCommitThreadsActive;
+    extern const Metric MergeTreeSnapshotCommitThreadsScheduled;
 }
 
 namespace DB
@@ -67,14 +71,16 @@ void StaticThreadPool::initialize(size_t max_threads, size_t max_free_threads, s
     if (instance)
         // throw Exception(ErrorCodes::LOGICAL_ERROR, "The {} is initialized twice", name);
         return;
-    std::call_once(init_flag, [&] { initializeImpl(max_threads, max_free_threads, queue_size); });
+
+    std::call_once(init_flag, [&]
+        {
+            initializeImpl(max_threads, max_free_threads, queue_size);
+        });
 }
 
 void StaticThreadPool::initializeWithDefaultSettingsIfNotInitialized()
 {
-    std::call_once(
-        init_flag,
-        [&]
+    std::call_once(init_flag, [&]
         {
             size_t max_threads = getNumberOfCPUCoresToUse();
             initializeImpl(max_threads, /*max_free_threads*/ 0, /*queue_size*/ 10000);
@@ -182,6 +188,12 @@ StaticThreadPool & getActivePartsLoadingThreadPool()
     return instance;
 }
 
+StaticThreadPool & getSnapshotCommitThreadPool()
+{
+    static StaticThreadPool instance("MergeTreeSnapshotCommitThreadPool", CurrentMetrics::MergeTreeSnapshotCommitThreads, CurrentMetrics::MergeTreeSnapshotCommitThreadsActive, CurrentMetrics::MergeTreeSnapshotCommitThreadsScheduled);
+    return instance;
+}
+
 StaticThreadPool & getPartsCleaningThreadPool()
 {
     static StaticThreadPool instance("MergeTreePartsCleanerThreadPool", CurrentMetrics::MergeTreePartsCleanerThreads, CurrentMetrics::MergeTreePartsCleanerThreadsActive, CurrentMetrics::MergeTreePartsCleanerThreadsScheduled);
@@ -221,11 +233,8 @@ StaticThreadPool & getMergeTreePrefixesDeserializationThreadPool()
 
 StaticThreadPool & getFormatParsingThreadPool()
 {
-    static StaticThreadPool instance(
-        "FormatParsingThreadPool",
-        CurrentMetrics::FormatParsingThreads,
-        CurrentMetrics::FormatParsingThreadsActive,
-        CurrentMetrics::FormatParsingThreadsScheduled);
+    static StaticThreadPool instance("FormatParsingThreadPool", CurrentMetrics::FormatParsingThreads, CurrentMetrics::FormatParsingThreadsActive, CurrentMetrics::FormatParsingThreadsScheduled);
     return instance;
 }
+
 }

@@ -71,7 +71,7 @@ Pipe StoragePython::read(
     const Names & column_names,
     const StorageSnapshotPtr & storage_snapshot,
     SelectQueryInfo & /*query_info*/,
-    ContextPtr /*context_*/,
+    ContextPtr context_,
     QueryProcessingStage::Enum /*processed_stage*/,
     size_t max_block_size,
     size_t num_streams)
@@ -86,7 +86,7 @@ Pipe StoragePython::read(
     }
 
     Block sample_block = prepareSampleBlock(column_names, storage_snapshot, is_virtual_column);
-    auto format_settings = getFormatSettings(getContext());
+    auto format_settings = getFormatSettings(context_);
 
     auto & data_source = data_source_wrapper->getDataSource();
     if (isInheritsFromPyReader(data_source))

@@ -50,6 +50,9 @@ JEMALLOC_EXPORT size_t JEMALLOC_NOTHROW	je_xallocx(void *ptr, size_t size,
     size_t extra, int flags);
 JEMALLOC_EXPORT size_t JEMALLOC_NOTHROW	je_sallocx(const void *ptr,
     int flags) JEMALLOC_ATTR(pure);
+/* Like je_sallocx but returns 0 for pointers not owned by jemalloc (safe for foreign ptrs). */
+JEMALLOC_EXPORT size_t JEMALLOC_NOTHROW	je_vsallocx(const void *ptr,
+    int flags) JEMALLOC_ATTR(pure);
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW	je_dallocx(void *ptr, int flags);
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW	je_sdallocx(void *ptr, size_t size,
     int flags);

@@ -623,29 +623,59 @@ namespace DB
         const String & format_name,
         arrow::ArrayBuilder* array_builder,
         size_t start,
-        size_t end)
+        size_t end,
+        bool as_uint16)
     {
         const PaddedPODArray<UInt16> & internal_data = assert_cast<const ColumnVector<UInt16> &>(*write_column).getData();
-        arrow::Date32Builder & builder = assert_cast<arrow::Date32Builder &>(*array_builder);
-        arrow::Status status;
 
-        if (null_bytemap)
+        if (as_uint16)
         {
-            for (size_t value_i = start; value_i < end; ++value_i)
+            arrow::Date32Builder & builder = assert_cast<arrow::Date32Builder &>(*array_builder);
+            arrow::Status status;
+
+            if (null_bytemap)
             {
-                if ((*null_bytemap)[value_i])
-                    status = builder.AppendNull();
-                else
+                for (size_t value_i = start; value_i < end; ++value_i)
+                {
+                    if ((*null_bytemap)[value_i])
+                        status = builder.AppendNull();
+                    else
+                        status = builder.Append(internal_data[value_i]);
+                    checkStatus(status, write_column->getName(), format_name);
+                }
+            }
+            else
+            {
+                for (size_t value_i = start; value_i < end; ++value_i)
+                {
                     status = builder.Append(internal_data[value_i]);
-                checkStatus(status, write_column->getName(), format_name);
+                    checkStatus(status, write_column->getName(), format_name);
+                }
             }
         }
         else
         {
-            for (size_t value_i = start; value_i < end; ++value_i)
+            arrow::Date32Builder & builder = assert_cast<arrow::Date32Builder &>(*array_builder);
+            arrow::Status status;
+
+            if (null_bytemap)
             {
-                status = builder.Append(internal_data[value_i]);
-                checkStatus(status, write_column->getName(), format_name);
+                for (size_t value_i = start; value_i < end; ++value_i)
+                {
+                    if ((*null_bytemap)[value_i])
+                        status = builder.AppendNull();
+                    else
+                        status = builder.Append(static_cast<Int32>(internal_data[value_i]));
+                    checkStatus(status, write_column->getName(), format_name);
+                }
+            }
+            else
+            {
+                for (size_t value_i = start; value_i < end; ++value_i)
+                {
+                    status = builder.Append(static_cast<Int32>(internal_data[value_i]));
+                    checkStatus(status, write_column->getName(), format_name);
+                }
             }
         }
     }
@@ -821,7 +851,7 @@ namespace DB
                 fillArrowArrayWithIPv4ColumnData(column, null_bytemap, format_name, array_builder, start, end);
                 break;
             case TypeIndex::Date:
-                fillArrowArrayWithDateColumnData(column, null_bytemap, format_name, array_builder, start, end);
+                fillArrowArrayWithDateColumnData(column, null_bytemap, format_name, array_builder, start, end, settings.output_date_as_uint16);
                 break;
             case TypeIndex::DateTime:
                 fillArrowArrayWithDateTimeColumnData(column, null_bytemap, format_name, array_builder, start, end);
@@ -1053,6 +1083,9 @@ namespace DB
 
         if (isIPv4(column_type))
             return arrow::uint32();
+
+        if (isDate(column_type) && settings.output_date_as_uint16)
+            return arrow::uint16();
 
         const std::string type_name = column_type->getFamilyName();
         if (const auto * arrow_type_it = std::find_if(

@@ -4,7 +4,6 @@
 
 #include <TableFunctions/ITableFunction.h>
 #include <Storages/ColumnsDescription.h>
-#include <Poco/Logger.h>
 
 namespace DB
 {
@@ -19,8 +18,6 @@ public:
     std::string getName() const override { return name; }
 
 private:
-    Poco::Logger * logger = &Poco::Logger::get("TableFunctionArrowStream");
-
     StoragePtr executeImpl(
         const ASTPtr & ast_function,
         ContextPtr context,
