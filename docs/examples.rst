@@ -650,13 +650,14 @@ Error Handling and Debugging
    else:
        print("Query failed - check your data and SQL syntax")
 
+
 Next Steps
 ----------
 
 These examples demonstrate chDB's versatility and power. To continue learning:
 
 - Explore the :doc:`udf` guide for custom functions
-- Check :doc:`session` for stateful operations  
+- Check :doc:`session` for stateful operations
 - Review :doc:`api` for DB-API 2.0 compatibility and complete API reference
 - See :doc:`api` for complete function reference
 

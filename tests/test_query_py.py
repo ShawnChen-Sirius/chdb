@@ -12,6 +12,7 @@ from pyarrow import csv
 import pyarrow.json
 import pyarrow.parquet
 import chdb
+from chdb.session import Session
 
 
 EXPECTED = """"auxten",9
@@ -412,6 +413,77 @@ class TestQueryPy(unittest.TestCase):
         self.assertEqual(len(result), 3)
         self.assertEqual(result['id'].tolist(), [1, 2, 3])
         self.assertEqual(result['total'].tolist(), [70, 80, 90])
+
+
+    def test_python_function_enabled_default(self):
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+        sess = Session()
+        result = sess.query('SELECT * FROM Python(df) ORDER BY a')
+        self.assertFalse(result.has_error())
+
+    def test_python_function_disabled_session(self):
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+        sess = Session()
+        sess.query('SET allow_python_table_function = 0')
+
+        with self.assertRaises(Exception) as context:
+            sess.query('SELECT * FROM Python(df)')
+
+        self.assertIn('allow_python_table_function', str(context.exception))
+
+    def test_python_function_disabled_query(self):
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+        with self.assertRaises(Exception) as context:
+            chdb.query('''
+                SET allow_python_table_function = 0;
+                SELECT * FROM Python(df);
+            ''')
+
+        self.assertIn('allow_python_table_function', str(context.exception))
+
+
+    def test_python_function_cannot_reenable_query(self):
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+        # Default works
+        result = chdb.query('SELECT * FROM Python(df)')
+        self.assertFalse(result.has_error())
+
+        # Disabling-enabling fails
+        with self.assertRaises(Exception) as context:
+            chdb.query('''
+                SET allow_python_table_function = 0;
+                SET allow_python_table_function = 1;
+            ''')
+
+        self.assertIn('allow_python_table_function', str(context.exception))
+
+        # ...but does not persist to another query
+        result = chdb.query('SELECT * FROM Python(df)')
+        self.assertFalse(result.has_error())
+
+    def test_python_function_cannot_reenable_session(self):
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+
+        sess = Session()
+        # Enable (default, works)
+        sess.query('SET allow_python_table_function = 1')
+        result = sess.query('SELECT * FROM Python(df)')
+        self.assertFalse(result.has_error())
+
+        # Disable (works)
+        sess.query('SET allow_python_table_function = 0')
+        with self.assertRaises(Exception) as context:
+            sess.query('SELECT * FROM Python(df)')
+        self.assertIn('allow_python_table_function', str(context.exception))
+
+        # Try to re-enable - should fail
+        with self.assertRaises(Exception) as context:
+            sess.query('SET allow_python_table_function = 1')
+        self.assertIn('allow_python_table_function', str(context.exception))
 
 
 if __name__ == "__main__":
