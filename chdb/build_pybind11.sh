@@ -51,12 +51,16 @@ build_pybind11_nonlimitedapi() {
     cd "${BUILD_DIR}"
 
     local py_version=$1
+    local force_python="${2:-}"
     echo "Building pybind11 nonlimitedapi library for Python ${py_version}..."
 
     local full_py_version=""
     local custom_python_path=""
 
-    if command -v pyenv >/dev/null 2>&1; then
+    if [ -n "${force_python}" ] && [ -x "${force_python}" ]; then
+        custom_python_path="${force_python}"
+        echo "Using explicit Python executable: ${custom_python_path}"
+    elif command -v pyenv >/dev/null 2>&1; then
         full_py_version=$(pyenv versions --bare | grep "^${py_version}\." | head -n 1)
 
         if [ -n "$full_py_version" ]; then
@@ -88,7 +92,7 @@ build_pybind11_nonlimitedapi() {
         echo "Cross-compiling mode enabled, using Python headers from ${python_include_dir}"
     fi
 
-    cmake ${py_cmake_args} -DENABLE_PYTHON=1 -DCMAKE_BUILD_TYPE=Release ..
+    cmake ${py_cmake_args} -DENABLE_PYTHON=1 -DCMAKE_BUILD_TYPE=Release "${PROJ_DIR}"
 
     # Build only the pybind11 targets
     ninja pybind11nonlimitedapi_chdb_${py_version} || {
@@ -106,6 +110,15 @@ build_pybind11_nonlimitedapi() {
 
     if [ -f "${BUILD_DIR}/contrib/pybind11-cmake/${lib_file}" ]; then
         cp "${BUILD_DIR}/contrib/pybind11-cmake/${lib_file}" "${CHDB_DIR}/${lib_file}"
+        # Add DT_NEEDED on _chdb.abi3.so so that RTLD_DEEPBIND can find
+        # jemalloc-backed operator new/delete from _chdb instead of falling
+        # through to a global libstdc++.
+        if [ "$cross_compile" != true ] && [ "$(uname)" = "Linux" ]; then
+            patchelf --add-needed _chdb.abi3.so \
+                     --add-rpath '$ORIGIN' \
+                     "${CHDB_DIR}/${lib_file}"
+            echo "Patched ${lib_file}: added DT_NEEDED _chdb.abi3.so and RPATH \$ORIGIN"
+        fi
         echo "Copied ${lib_file} to ${CHDB_DIR}/"
         echo "Library location: $(realpath ${CHDB_DIR}/${lib_file})"
     else
@@ -116,7 +129,12 @@ build_pybind11_nonlimitedapi() {
 }
 
 build_all_pybind11_nonlimitedapi() {
-    local python_versions=("3.9" "3.10" "3.11" "3.12" "3.13" "3.14")
+    local python_versions
+    if [ -n "${CHDB_PYBIND11_PYTHON_VERSIONS:-}" ]; then
+        read -r -a python_versions <<< "${CHDB_PYBIND11_PYTHON_VERSIONS}"
+    else
+        python_versions=("3.9" "3.10" "3.11" "3.12" "3.13" "3.14")
+    fi
 
     echo "Building pybind11 nonlimitedapi libraries for all Python versions..."
 
@@ -134,38 +152,60 @@ build_all_pybind11_nonlimitedapi() {
             fi
         done
     else
-        # Check if pyenv is available
-        if [ -z "$(command -v pyenv)" ]; then
-            echo "Error: pyenv not found. Please install pyenv first."
+        if command -v pyenv >/dev/null 2>&1; then
+            for version in "${python_versions[@]}"; do
+                local pyenv_version
+                pyenv_version=$(pyenv versions --bare | grep "^${version}\." | head -1)
+                if [ -z "$pyenv_version" ]; then
+                    echo "Error: Python ${version} not found in pyenv. Please install it with: pyenv install ${version}.x"
+                    exit 1
+                fi
+
+                echo "Found pyenv Python ${pyenv_version}"
+                export PYENV_VERSION=$pyenv_version
+
+                local python_include
+                python_include=$(python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null)
+                local active_version
+                active_version=$(python --version 2>&1)
+                echo "  Active Python: $active_version"
+
+                if [ -f "$python_include/Python.h" ]; then
+                    echo "  Headers found at: $python_include"
+                    build_pybind11_nonlimitedapi "${version}"
+                else
+                    echo "Error: Python.h not found for Python ${version} at $python_include"
+                    unset PYENV_VERSION
+                    exit 1
+                fi
+
+                unset PYENV_VERSION
+            done
+        elif [ -n "${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE:-}" ] && [ -x "${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE}" ]; then
+            local _pe="${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE}"
+            for version in "${python_versions[@]}"; do
+                local _majmin
+                _majmin=$("${_pe}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)
+                if [ "${_majmin}" != "${version}" ]; then
+                    echo "Error: CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE reports ${_majmin}, expected ${version}"
+                    exit 1
+                fi
+
+                local python_include
+                python_include=$("${_pe}" -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || true)
+                echo "  Using interpreter: ${_pe}"
+                if [ -n "${python_include}" ] && [ -f "${python_include}/Python.h" ]; then
+                    echo "  Headers found at: ${python_include}"
+                else
+                    echo "  Note: Python.h not under sysconfig include (${python_include:-unknown}); proceeding (CMake + CHDB_CUSTOM_PYTHON_EXECUTABLE)."
+                fi
+
+                build_pybind11_nonlimitedapi "${version}" "${_pe}"
+            done
+        else
+            echo "Error: pyenv not found. Install pyenv, or set CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE and CHDB_PYBIND11_PYTHON_VERSIONS (see chdb/build.local.example)."
             exit 1
         fi
-
-        for version in "${python_versions[@]}"; do
-            # Use pyenv to find specific version
-            local pyenv_version=$(pyenv versions --bare | grep "^${version}\." | head -1)
-            if [ -z "$pyenv_version" ]; then
-                echo "Error: Python ${version} not found in pyenv. Please install it with: pyenv install ${version}.x"
-                exit 1
-            fi
-
-            echo "Found pyenv Python ${pyenv_version}"
-            export PYENV_VERSION=$pyenv_version
-
-            local python_include=$(python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null)
-            local active_version=$(python --version 2>&1)
-            echo "  Active Python: $active_version"
-
-            if [ -f "$python_include/Python.h" ]; then
-                echo "  Headers found at: $python_include"
-                build_pybind11_nonlimitedapi "${version}"
-            else
-                echo "Error: Python.h not found for Python ${version} at $python_include"
-                unset PYENV_VERSION
-                exit 1
-            fi
-
-            unset PYENV_VERSION
-        done
     fi
 
     echo "Finished building pybind11 nonlimitedapi libraries"

@@ -57,6 +57,19 @@ if sys.version_info[:2] >= (3, 7):
     # and import _chdb then change the working directory back
     cwd = os.getcwd()
     os.chdir(current_path)
+    # Pre-load _chdb.abi3.so with RTLD_DEEPBIND so that its DT_NEEDED
+    # dependency (pybind11 stubs) resolves weak operator new/delete from
+    # _chdb's jemalloc rather than from a global libstdc++ (e.g. ray, torch).
+    if sys.platform == "linux":
+        import ctypes
+        _RTLD_DEEPBIND = 0x00008
+        try:
+            ctypes.CDLL(
+                os.path.join(current_path, "_chdb.abi3.so"),
+                mode=sys.getdlopenflags() | _RTLD_DEEPBIND,
+            )
+        except OSError:
+            pass
     from . import _chdb  # noqa
 
     os.chdir(cwd)

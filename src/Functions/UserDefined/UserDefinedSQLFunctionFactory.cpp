@@ -1,4 +1,5 @@
 #include <Functions/UserDefined/UserDefinedSQLFunctionFactory.h>
+#include <Common/CurrentThread.h>
 
 #include <AggregateFunctions/AggregateFunctionFactory.h>
 #include <Backups/RestorerFromBackup.h>
@@ -8,10 +9,12 @@
 #include <Functions/UserDefined/UserDefinedExecutableFunctionFactory.h>
 #include <Functions/UserDefined/UserDefinedSQLObjectType.h>
 #include <Functions/UserDefined/UserDefinedSQLObjectsBackup.h>
+#include <Functions/UserDefined/UserDefinedWebAssembly.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/FunctionNameNormalizer.h>
 #include <Interpreters/NormalizeSelectWithUnionQueryVisitor.h>
-#include <Parsers/ASTCreateFunctionQuery.h>
+#include <Parsers/ASTCreateSQLFunctionQuery.h>
+#include <Parsers/ASTCreateWasmFunctionQuery.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Common/quoteString.h>
@@ -36,7 +39,7 @@ extern const int BAD_ARGUMENTS;
 
 namespace
 {
-void validateFunctionRecursiveness(const IAST & node, const String & function_to_create)
+void validateSQLFunctionRecursiveness(const IAST & node, const String & function_to_create)
 {
     for (const auto & child : node.children)
     {
@@ -44,11 +47,11 @@ void validateFunctionRecursiveness(const IAST & node, const String & function_to
         if (function_name_opt && function_name_opt.value() == function_to_create)
             throw Exception(ErrorCodes::CANNOT_CREATE_RECURSIVE_FUNCTION, "You cannot create recursive function");
 
-        validateFunctionRecursiveness(*child, function_to_create);
+        validateSQLFunctionRecursiveness(*child, function_to_create);
     }
 }
 
-void validateFunction(ASTPtr function, const String & name)
+void validateSQLFunction(ASTPtr function, const String & name)
 {
     ASTFunction * lambda_function = function->as<ASTFunction>();
 
@@ -84,22 +87,32 @@ void validateFunction(ASTPtr function, const String & name)
     if (!function_body)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Lambda must have valid function body");
 
-    validateFunctionRecursiveness(*function_body, name);
+    validateSQLFunctionRecursiveness(*function_body, name);
+}
 }
 
 ASTPtr normalizeCreateFunctionQuery(const IAST & create_function_query, const ContextPtr & context)
 {
     auto ptr = create_function_query.clone();
-    auto & res = typeid_cast<ASTCreateFunctionQuery &>(*ptr);
-    res.if_not_exists = false;
-    res.or_replace = false;
-    FunctionNameNormalizer::visit(res.function_core.get());
-    NormalizeSelectWithUnionQueryVisitor::Data data{context->getSettingsRef()[Setting::union_default_mode]};
-    NormalizeSelectWithUnionQueryVisitor{data}.visit(res.function_core);
+
+    if (auto * query = typeid_cast<ASTCreateSQLFunctionQuery *>(ptr.get()))
+    {
+        query->if_not_exists = false;
+        query->or_replace = false;
+        FunctionNameNormalizer::visit(query->function_core.get());
+
+        NormalizeSelectWithUnionQueryVisitor::Data data{context->getSettingsRef()[Setting::union_default_mode]};
+        NormalizeSelectWithUnionQueryVisitor{data}.visit(query->function_core);
+    }
+
+    if (auto * query = typeid_cast<ASTCreateWasmFunctionQuery *>(ptr.get()))
+    {
+        query->if_not_exists = false;
+        query->or_replace = false;
+    }
+
     return ptr;
 }
-}
-
 
 UserDefinedSQLFunctionFactory & UserDefinedSQLFunctionFactory::instance()
 {
@@ -110,10 +123,31 @@ UserDefinedSQLFunctionFactory & UserDefinedSQLFunctionFactory::instance()
 UserDefinedSQLFunctionFactory::UserDefinedSQLFunctionFactory()
     : global_context(Context::getGlobalContextInstance())
 {
+    /// NOTE (chdb): global_context is captured here at singleton construction time and is intentionally
+    /// NOT used in the query-side methods below (get/tryGet/has/getAllRegisteredNames/empty/backup).
+    ///
+    /// In the standard ClickHouse server there is exactly one global context for the lifetime of the
+    /// process, so caching it in the constructor is safe.  chdb is different: it supports multiple
+    /// sequential sessions within the same process.  Each session calls Context::makeGlobalContext()
+    /// which overwrites Context::global_context_instance with the new session's context.  At the end
+    /// of a session, Context::shutdown() destroys the session's UserDefinedSQLObjectsDiskStorage
+    /// (resetting it to nullptr).
+    ///
+    /// If the query methods used the cached global_context, they would query the *first* session's
+    /// storage.  After that session closes, its storage is nullptr; accessing it lazily re-creates a
+    /// fresh, empty storage that never has loadObjects() called on it.  UDFs created in session 1 and
+    /// persisted to disk would then be invisible in session 2, producing:
+    ///   Code: 46. DB::Exception: Function '...' does not exist. (UNKNOWN_FUNCTION)
+    ///
+    /// The fix: use Context::getGlobalContextInstance() dynamically in every query-side method.
+    /// getGlobalContextInstance() always returns the *current* session's context (updated by each
+    /// makeGlobalContext() call), so these methods always reach the storage that had loadObjects()
+    /// invoked on it during session initialization.
 }
 
-void UserDefinedSQLFunctionFactory::checkCanBeRegistered(
-    const ContextPtr & context, const String & function_name, const IAST & create_function_query)
+/// Checks that a specified function can be registered, throws an exception if not.
+static void checkCanBeRegistered(
+    const ContextPtr & context, const String & function_name, const IAST & create_function_query, bool throw_if_exists)
 {
     if (FunctionFactory::instance().hasNameOrAlias(function_name))
         throw Exception(ErrorCodes::FUNCTION_ALREADY_EXISTS, "The function '{}' already exists", function_name);
@@ -122,19 +156,23 @@ void UserDefinedSQLFunctionFactory::checkCanBeRegistered(
         throw Exception(ErrorCodes::FUNCTION_ALREADY_EXISTS, "The aggregate function '{}' already exists", function_name);
 
     if (UserDefinedExecutableFunctionFactory::instance().has(
-            function_name, context)) /// NOLINT(readability-static-accessed-through-instance)
+        function_name, context)) /// NOLINT(readability-static-accessed-through-instance)
         throw Exception(ErrorCodes::FUNCTION_ALREADY_EXISTS, "User defined executable function '{}' already exists", function_name);
 
-    validateFunction(assert_cast<const ASTCreateFunctionQuery &>(create_function_query).function_core, function_name);
+    if (throw_if_exists && UserDefinedWebAssemblyFunctionFactory::instance().has(function_name)) /// NOLINT(readability-static-accessed-through-instance)
+        throw Exception(ErrorCodes::FUNCTION_ALREADY_EXISTS, "User defined wasm function '{}' already exists", function_name);
+
+    if (const auto * create_sql_function_query = typeid_cast<const ASTCreateSQLFunctionQuery *>(&create_function_query))
+        validateSQLFunction(create_sql_function_query->function_core, function_name);
 }
 
-void UserDefinedSQLFunctionFactory::checkCanBeUnregistered(const ContextPtr & context, const String & function_name)
+static void checkCanBeUnregistered(const ContextPtr & context, const String & function_name)
 {
     if (FunctionFactory::instance().hasNameOrAlias(function_name) || AggregateFunctionFactory::instance().hasNameOrAlias(function_name))
         throw Exception(ErrorCodes::CANNOT_DROP_FUNCTION, "Cannot drop system function '{}'", function_name);
 
     if (UserDefinedExecutableFunctionFactory::instance().has(
-            function_name, context)) /// NOLINT(readability-static-accessed-through-instance)
+        function_name, context)) // NOLINT(readability-static-accessed-through-instance)
         throw Exception(ErrorCodes::CANNOT_DROP_FUNCTION, "Cannot drop user defined executable function '{}'", function_name);
 }
 
@@ -145,11 +183,16 @@ bool UserDefinedSQLFunctionFactory::registerFunction(
     bool throw_if_exists,
     bool replace_if_exists)
 {
-    checkCanBeRegistered(context, function_name, *create_function_query);
+    checkCanBeRegistered(context, function_name, *create_function_query, throw_if_exists);
     create_function_query = normalizeCreateFunctionQuery(*create_function_query, context);
 
     try
     {
+        if (create_function_query->as<ASTCreateWasmFunctionQuery>())
+            UserDefinedWebAssemblyFunctionFactory::instance().addOrReplace(create_function_query, context->getWasmModuleManager());
+        else if (replace_if_exists && UserDefinedWebAssemblyFunctionFactory::instance().has(function_name))
+            UserDefinedWebAssemblyFunctionFactory::instance().dropIfExists(function_name);
+
         auto & loader = context->getUserDefinedSQLObjectsStorage();
         bool stored = loader.storeObject(
             context,
@@ -164,7 +207,7 @@ bool UserDefinedSQLFunctionFactory::registerFunction(
     }
     catch (Exception & exception)
     {
-        exception.addMessage(fmt::format("while storing user defined function {}", backQuote(function_name)));
+        exception.addMessage(fmt::format("while adding user defined function {}", backQuote(function_name)));
         throw;
     }
 
@@ -189,16 +232,22 @@ bool UserDefinedSQLFunctionFactory::unregisterFunction(
         throw;
     }
 
+    /// If deleted function is a WASM function, remove it from WASM function factory as well
+    /// After that wasm modules can be safely dropped as well, since no functions refer to them
+    UserDefinedWebAssemblyFunctionFactory::instance().dropIfExists(function_name);
+
     return true;
 }
 
 ASTPtr UserDefinedSQLFunctionFactory::get(const String & function_name) const
 {
+    /// chdb: use getGlobalContextInstance() (the current session's context) rather than the cached
+    /// global_context (set at singleton construction) — see constructor comment for full rationale.
     ASTPtr ast = Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().get(function_name);
 
     if (ast && CurrentThread::isInitialized())
     {
-        auto query_context = CurrentThread::get().getQueryContext();
+        auto query_context = CurrentThread::get().tryGetQueryContext();
         if (query_context && query_context->getSettingsRef()[Setting::log_queries])
             query_context->addQueryFactoriesInfo(Context::QueryLogFactories::SQLUserDefinedFunction, function_name);
     }
@@ -208,11 +257,12 @@ ASTPtr UserDefinedSQLFunctionFactory::get(const String & function_name) const
 
 ASTPtr UserDefinedSQLFunctionFactory::tryGet(const std::string & function_name) const
 {
+    /// chdb: see get() comment above.
     ASTPtr ast = Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().tryGet(function_name);
 
     if (ast && CurrentThread::isInitialized())
     {
-        auto query_context = CurrentThread::get().getQueryContext();
+        auto query_context = CurrentThread::get().tryGetQueryContext();
         if (query_context && query_context->getSettingsRef()[Setting::log_queries])
             query_context->addQueryFactoriesInfo(Context::QueryLogFactories::SQLUserDefinedFunction, function_name);
     }
@@ -222,21 +272,25 @@ ASTPtr UserDefinedSQLFunctionFactory::tryGet(const std::string & function_name) 
 
 bool UserDefinedSQLFunctionFactory::has(const String & function_name) const
 {
+    /// chdb: see get() comment above.
     return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().has(function_name);
 }
 
 std::vector<std::string> UserDefinedSQLFunctionFactory::getAllRegisteredNames() const
 {
+    /// chdb: see get() comment above.
     return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().getAllObjectNames();
 }
 
 bool UserDefinedSQLFunctionFactory::empty() const
 {
+    /// chdb: see get() comment above.
     return Context::getGlobalContextInstance()->getUserDefinedSQLObjectsStorage().empty();
 }
 
 void UserDefinedSQLFunctionFactory::backup(BackupEntriesCollector & backup_entries_collector, const String & data_path_in_backup) const
 {
+    /// chdb: see get() comment above.
     backupUserDefinedSQLObjects(
         backup_entries_collector,
         data_path_in_backup,
@@ -253,6 +307,23 @@ void UserDefinedSQLFunctionFactory::restore(RestorerFromBackup & restorer, const
     auto context = restorer.getContext();
     for (const auto & [function_name, create_function_query] : restored_functions)
         registerFunction(context, function_name, create_function_query, throw_if_exists, replace_if_exists);
+}
+
+void UserDefinedSQLFunctionFactory::loadFunctions(IUserDefinedSQLObjectsStorage & function_storage, WasmModuleManager & wasm_module_manager)
+{
+    for (const auto & [name, create_function_query] : function_storage.getAllObjects())
+    {
+        try
+        {
+            if (create_function_query->as<ASTCreateWasmFunctionQuery>())
+                UserDefinedWebAssemblyFunctionFactory::instance().addOrReplace(create_function_query, wasm_module_manager);
+        }
+        catch (Exception & exception)
+        {
+            exception.addMessage(fmt::format("while loading user defined function {}", backQuote(name)));
+            throw;
+        }
+    }
 }
 
 }

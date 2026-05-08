@@ -54,7 +54,12 @@ void * operator new(std::size_t size)
 {
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace);
-    void * ptr = Memory::newImpl(size);
+    void * ptr = Memory::newNoExcept(size);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        throw std::bad_alloc{};
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -63,7 +68,12 @@ void * operator new(std::size_t size, std::align_val_t align)
 {
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace, align);
-    void * ptr = Memory::newImpl(size, align);
+    void * ptr = Memory::newNoExcept(size, align);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        throw std::bad_alloc{};
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -72,7 +82,12 @@ void * operator new[](std::size_t size)
 {
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace);
-    void * ptr =  Memory::newImpl(size);
+    void * ptr = Memory::newNoExcept(size);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        throw std::bad_alloc{};
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -81,7 +96,12 @@ void * operator new[](std::size_t size, std::align_val_t align)
 {
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace, align);
-    void * ptr = Memory::newImpl(size, align);
+    void * ptr = Memory::newNoExcept(size, align);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        throw std::bad_alloc{};
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -91,6 +111,11 @@ void * operator new(std::size_t size, const std::nothrow_t &) noexcept
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace);
     void * ptr = Memory::newNoExcept(size);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        return nullptr;
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -100,6 +125,11 @@ void * operator new[](std::size_t size, const std::nothrow_t &) noexcept
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace);
     void * ptr = Memory::newNoExcept(size);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        return nullptr;
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -109,6 +139,11 @@ void * operator new(std::size_t size, std::align_val_t align, const std::nothrow
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace, align);
     void * ptr = Memory::newNoExcept(size, align);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        return nullptr;
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -118,6 +153,11 @@ void * operator new[](std::size_t size, std::align_val_t align, const std::nothr
     AllocationTrace trace;
     std::size_t actual_size = Memory::trackMemory(size, trace, align);
     void * ptr = Memory::newNoExcept(size, align);
+    if (!ptr) [[unlikely]]
+    {
+        [[maybe_unused]] auto rollback_trace = CurrentMemoryTracker::free(actual_size);
+        return nullptr;
+    }
     trace.onAlloc(ptr, actual_size);
     return ptr;
 }
@@ -194,6 +234,7 @@ inline ALWAYS_INLINE bool tryFreeNonJemallocMemoryConditional(void * ptr)
 /// cppreference:
 /// It's unspecified whether size-aware or size-unaware version is called when deleting objects of
 /// incomplete type and arrays of non-class and trivially-destructible class types.
+
 
 void operator delete(void * ptr) noexcept
 {
@@ -290,203 +331,3 @@ void operator delete[](void * ptr, std::size_t size, std::align_val_t align) noe
     trace.onFree(ptr, actual_size);
     Memory::deleteSized(ptr, size, align);
 }
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreserved-identifier"
-
-extern "C" void * __wrap_malloc(size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    std::size_t actual_size = Memory::trackMemoryFromC(size, trace);
-#if USE_JEMALLOC
-    void * ptr = je_malloc(size);
-#else
-    void * ptr = __real_malloc(size);
-#endif
-    if (unlikely(!ptr))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(ptr, actual_size);
-    return ptr;
-}
-
-extern "C" void * __wrap_calloc(size_t number_of_members, size_t size) // NOLINT
-{
-    size_t real_size = 0;
-    if (__builtin_mul_overflow(number_of_members, size, &real_size))
-        return nullptr;
-
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(real_size, trace);
-#if USE_JEMALLOC
-    void * res = je_calloc(number_of_members, size);
-#else
-    void * res = __real_calloc(number_of_members, size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-
-extern "C" void * __wrap_realloc(void * ptr, size_t size) // NOLINT
-{
-    if (ptr)
-    {
-#if USE_JEMALLOC
-        if (!isJemallocMemory(ptr))
-        {
-            return __real_realloc(ptr, size);
-        }
-#endif
-        AllocationTrace trace;
-        size_t actual_size = Memory::untrackMemory(ptr, trace);
-        trace.onFree(ptr, actual_size);
-    }
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace);
-#if USE_JEMALLOC
-    void * res = je_realloc(ptr, size);
-#else
-    void * res = __real_realloc(ptr, size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-
-extern "C" int __wrap_posix_memalign(void ** memptr, size_t alignment, size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace, static_cast<std::align_val_t>(alignment));
-#if USE_JEMALLOC
-    int res = je_posix_memalign(memptr, alignment, size);
-#else
-    int res = __real_posix_memalign(memptr, alignment, size);
-#endif
-    if (unlikely(res != 0))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return res;
-    }
-    trace.onAlloc(*memptr, actual_size);
-    return res;
-}
-
-extern "C" void * __wrap_aligned_alloc(size_t alignment, size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace, static_cast<std::align_val_t>(alignment));
-#if USE_JEMALLOC
-    void * res = je_aligned_alloc(alignment, size);
-#else
-    void * res = __real_aligned_alloc(alignment, size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-
-#if !defined(OS_FREEBSD)
-extern "C" void * __wrap_valloc(size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace);
-#if USE_JEMALLOC
-    void * res = je_valloc(size);
-#else
-    void * res = __real_valloc(size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-
-extern "C" void * __wrap_reallocarray(void * ptr, size_t number_of_members, size_t size) // NOLINT
-{
-    size_t real_size = 0;
-    if (__builtin_mul_overflow(number_of_members, size, &real_size))
-        return nullptr;
-#if USE_JEMALLOC
-    return je_realloc(ptr, real_size);
-#else
-    return __wrap_realloc(ptr, real_size);
-#endif
-}
-
-extern "C" void __wrap_free(void * ptr) // NOLINT
-{
-#if USE_JEMALLOC
-    if (tryFreeNonJemallocMemory(ptr))
-        return;
-#endif
-    AllocationTrace trace;
-    size_t actual_size = Memory::untrackMemory(ptr, trace);
-    trace.onFree(ptr, actual_size);
-#if USE_JEMALLOC
-    je_free(ptr);
-#else
-    __real_free(ptr);
-#endif
-}
-
-#if !defined(OS_DARWIN) && !defined(OS_FREEBSD)
-extern "C" void * __wrap_memalign(size_t alignment, size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace, static_cast<std::align_val_t>(alignment));
-#if USE_JEMALLOC
-    void * res = je_memalign(alignment, size);
-#else
-    void * res = __real_memalign(alignment, size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-#endif
-
-#if !defined(USE_MUSL) && defined(OS_LINUX)
-extern "C" void * __wrap_pvalloc(size_t size) // NOLINT
-{
-    AllocationTrace trace;
-    size_t actual_size = Memory::trackMemoryFromC(size, trace);
-#if USE_JEMALLOC
-    void * res = je_pvalloc(size);
-#else
-    void * res = __real_pvalloc(size);
-#endif
-    if (unlikely(!res))
-    {
-        trace = CurrentMemoryTracker::free(actual_size);
-        return nullptr;
-    }
-    trace.onAlloc(res, actual_size);
-    return res;
-}
-#endif
-
-#endif // !defined(OS_FREEBSD)
-
-#pragma clang diagnostic pop

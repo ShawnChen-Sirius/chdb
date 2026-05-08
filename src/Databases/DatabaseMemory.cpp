@@ -8,6 +8,7 @@
 #include <Interpreters/DatabaseCatalog.h>
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTFunction.h>
+#include <Common/ZooKeeper/ZooKeeperCommon.h>
 #include <Common/quoteString.h>
 #include <Storages/IStorage.h>
 
@@ -21,20 +22,22 @@ namespace ErrorCodes
 }
 
 DatabaseMemory::DatabaseMemory(const String & name_, ContextPtr context_)
-    : DatabaseMemory(
-          name_,
-          /// TEMPORARY_DATABASE must have Nil UUID (this is expected by the codebase)
-          /// Other databases get a generated UUID to satisfy the assertion in DatabaseWithOwnTablesBase::shutdown()
-          name_ == DatabaseCatalog::TEMPORARY_DATABASE ? UUIDHelpers::Nil : UUIDHelpers::generateV4(),
-          context_)
+: DatabaseMemory(
+    name_,
+    /// TEMPORARY_DATABASE must have Nil UUID (this is expected by the codebase)
+    /// Other databases get a generated UUID to satisfy the assertion in DatabaseWithOwnTablesBase::shutdown()
+    name_ == DatabaseCatalog::TEMPORARY_DATABASE ? UUIDHelpers::Nil : UUIDHelpers::generateV4(),
+    context_)
 {
 }
+
 
 DatabaseMemory::DatabaseMemory(const String & name_, UUID uuid, ContextPtr context_)
     : DatabaseWithOwnTablesBase(name_, "DatabaseMemory(" + name_ + ")", context_)
     , data_path(DatabaseCatalog::getDataDirPath(name_) / "")
     , db_uuid(uuid)
 {
+    auto component_guard = Coordination::setCurrentComponent("DatabaseMemory::DatabaseMemory");
     /// Temporary database should not have any data at the moment of its creation.
     /// In case of starting up after sudden server shutdown, remove the database folder of the temporary database.
     if (name_ == DatabaseCatalog::TEMPORARY_DATABASE)
@@ -109,7 +112,7 @@ ASTPtr DatabaseMemory::getCreateDatabaseQueryImpl() const
     create_query->setDatabase(database_name);
     create_query->set(create_query->storage, make_intrusive<ASTStorage>());
     auto engine = makeASTFunction(getEngineName());
-    engine->no_empty_args = true;
+    engine->setNoEmptyArgs(true);
     create_query->storage->set(create_query->storage->engine, engine);
 
     if (!comment.empty())
@@ -140,6 +143,16 @@ UUID DatabaseMemory::tryGetTableUUID(const String & table_name) const
 
 void DatabaseMemory::removeDataPath(ContextPtr)
 {
+    /// This method is called in two cases:
+    /// 1. During startup for the temporary database (_temporary_and_external_tables) to clean up
+    ///    stale directories from previous server sessions (e.g., after crash or Ctrl+C).
+    ///    Temporary tables with disk-based engines (like MergeTree) may leave behind files that
+    ///    need to be removed.
+    /// 2. On explicit DROP DATABASE to remove all data.
+    ///
+    /// We must use removeRecursive() instead of removeDirectoryIfExists() because the directory
+    /// may contain files from temporary tables. Using removeDirectoryIfExists()
+    /// would fail or throw an exception if the directory is not empty.
     auto db_disk = getDisk();
     db_disk->removeRecursive(data_path);
 }

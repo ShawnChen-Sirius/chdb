@@ -9,9 +9,14 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 # Setup LLVM path BEFORE sourcing vars.sh so that llvm tools can be found
 if [ "$(uname)" == "Darwin" ]; then
-    export CXX=$(brew --prefix llvm@19)/bin/clang++
-    export CC=$(brew --prefix llvm@19)/bin/clang
-    export PATH=$(brew --prefix llvm@19)/bin:$PATH
+    if command -v brew >/dev/null 2>&1 && _llvm=$(brew --prefix llvm@21 2>/dev/null) && [ -x "${_llvm}/bin/clang++" ]; then
+        export CXX="${_llvm}/bin/clang++"
+        export CC="${_llvm}/bin/clang"
+        export PATH="${_llvm}/bin:${PATH}"
+    else
+        export CC=/usr/bin/clang
+        export CXX=/usr/bin/clang++
+    fi
 fi
 
 . ${DIR}/vars.sh
@@ -116,9 +121,15 @@ CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_XRAY=0 
     -DCHDB_VERSION=${CHDB_VERSION} \
     "
 
+# Only disable compiler cache when neither ccache nor sccache is available.
+# On Linux CI the Docker image provides ccache; preserve it for fast incremental builds.
+if ! command -v ccache >/dev/null 2>&1 && ! command -v sccache >/dev/null 2>&1; then
+    CMAKE_ARGS="${CMAKE_ARGS} -DCOMPILER_CACHE=disabled"
+fi
+
 LIBCHDB_SO="libchdb.so"
 # Build libchdb.so
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ..
+cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ${PROJ_DIR}
 ninja -d keeprsp
 
 
@@ -181,14 +192,14 @@ ls -lh ${LIBCHDB}
 
 # build chdb python module
 py_version="3.9"
-current_py_version=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+current_py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
 if [ "$current_py_version" != "$py_version" ]; then
     echo "Error: Current Python version is $current_py_version, but required version is $py_version"
     echo "Please switch to Python $py_version using: pyenv shell $py_version"
     exit 1
 fi
 echo "Using Python version: $current_py_version"
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=1 -DPYBIND11_NONLIMITEDAPI_PYTHON_HEADERS_VERSION=${py_version} ..
+cmake ${CMAKE_ARGS} -DENABLE_PYTHON=1 -DPYBIND11_NONLIMITEDAPI_PYTHON_HEADERS_VERSION=${py_version} ${PROJ_DIR}
 ninja -d keeprsp || true
 
 # del the binary and run ninja -v again to capture the command, then modify it to generate CHDB_PY_MODULE
@@ -217,14 +228,10 @@ PYCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
      )
 
 if [ "$(uname)" == "Linux" ]; then
-    # remove src/CMakeFiles/clickhouse_malloc.dir/Common/stubFree.c.o
-    PYCHDB_CMD=$(echo ${PYCHDB_CMD} | sed 's/ src\/CMakeFiles\/clickhouse_malloc.dir\/Common\/stubFree.c.o//g')
-    # put -Wl,-wrap,malloc ... after -DUSE_JEMALLOC=1
-    PYCHDB_CMD=$(echo ${PYCHDB_CMD} | sed 's/ -DUSE_JEMALLOC=1/ -DUSE_JEMALLOC=1 -Wl,-wrap,malloc -Wl,-wrap,valloc -Wl,-wrap,pvalloc -Wl,-wrap,calloc -Wl,-wrap,realloc -Wl,-wrap,memalign -Wl,-wrap,aligned_alloc -Wl,-wrap,posix_memalign -Wl,-wrap,free/g')
-    if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
-        ${SED_INPLACE} 's/ src\/CMakeFiles\/clickhouse_malloc.dir\/Common\/stubFree.c.o//g' CMakeFiles/pychdb.rsp
-        ${SED_INPLACE} 's/ -DUSE_JEMALLOC=1/ -DUSE_JEMALLOC=1 -Wl,-wrap,malloc -Wl,-wrap,valloc -Wl,-wrap,pvalloc -Wl,-wrap,calloc -Wl,-wrap,realloc -Wl,-wrap,memalign -Wl,-wrap,aligned_alloc -Wl,-wrap,posix_memalign -Wl,-wrap,free/g' CMakeFiles/pychdb.rsp
-    fi
+    # malloc.cpp now uses direct symbol interposition (defines malloc/free/etc. calling je_* directly).
+    # The old -wrap linker approach is no longer needed and caused __wrap_malloc to be undefined at runtime.
+    # No modifications needed for Linux jemalloc integration.
+    true
 fi
 
 if [ "$(uname)" == "Darwin" ]; then
@@ -332,6 +339,19 @@ echo -e "\nAfter copy:"
 cd ${PROJ_DIR} && pwd
 
 ccache -s || true
+
+# Auto-detect Python for pybind11 when pyenv is absent and env vars are not already set
+if ! command -v pyenv >/dev/null 2>&1 && [ -z "${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE:-}" ]; then
+    _py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+    if [ -n "${_py}" ]; then
+        _ver=$("${_py}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)
+        if [ -n "${_ver}" ]; then
+            export CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE="${_py}"
+            export CHDB_PYBIND11_PYTHON_VERSIONS="${_ver}"
+            echo "Auto-detected Python ${_ver} at ${_py} for pybind11 build"
+        fi
+    fi
+fi
 
 CMAKE_ARGS="${CMAKE_ARGS}" bash ${DIR}/build_pybind11.sh --all
 

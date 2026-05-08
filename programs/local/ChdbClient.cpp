@@ -10,6 +10,7 @@
 #include <chdb-internal.h>
 #include <Poco/Net/SocketAddress.h>
 #include <Common/Config/ConfigHelper.h>
+#include <Common/CurrentThread.h>
 #include <Common/Exception.h>
 
 #if USE_PYTHON
@@ -89,6 +90,8 @@ void ChdbClient::cleanup()
         streaming_query_context.reset();
         connection.reset();
         client_context.reset();
+        global_context.reset();
+        session.reset();
     }
     catch (...)
     {
