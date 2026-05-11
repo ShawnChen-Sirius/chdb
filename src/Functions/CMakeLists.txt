@@ -65,6 +65,14 @@ if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
         FunctionsHashingRipe.cpp
         FunctionsHashingSSL.cpp
         FunctionsHashingMurmur.cpp
+        # Locality-sensitive hashing (ngramSimHash, wordShingleSimHash, ngramMinHash...)
+        # Niche near-duplicate detection. ~2 MB unstripped.
+        FunctionsStringHash.cpp
+        # Roaring-bitmap functions (bitmapBuild, bitmapAnd, etc.). They consume
+        # AggregateFunction(groupBitmap) blobs, which we already drop via
+        # CHDB_MINIMAL_AGGREGATE_FUNCTIONS, so these are dead in chdb-core-lite.
+        # ~2.5 MB unstripped.
+        FunctionsBitmap.cpp
         # Niche string / encoding
         ascii.cpp
         soundex.cpp
