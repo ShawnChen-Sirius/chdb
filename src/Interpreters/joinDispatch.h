@@ -99,6 +99,20 @@ static constexpr std::array<JoinKind, 4> KINDS = {
     JoinKind::Right
 };
 
+/// Inner/Full × Semi/Anti are template-only artifacts: the SQL parser already
+/// rejects them ("SEMI|ANTI JOIN should be LEFT or RIGHT"), so the runtime
+/// branches are unreachable. When CHDB_TRIM_HASH_JOIN_NICHE is on, we skip
+/// their instantiation at compile time and drop the matching .cpp stubs from
+/// the build.
+template <JoinKind kind, JoinStrictness strictness>
+constexpr bool is_niche_hash_join_combo_v =
+#if defined(CHDB_TRIM_HASH_JOIN_NICHE) && CHDB_TRIM_HASH_JOIN_NICHE
+    (kind == JoinKind::Inner || kind == JoinKind::Full)
+    && (strictness == JoinStrictness::Semi || strictness == JoinStrictness::Anti);
+#else
+    false;
+#endif
+
 /// Init specified join map
 inline bool joinDispatchInit(JoinKind kind, JoinStrictness strictness, HashJoin::MapsVariant & maps, bool prefer_use_maps_all = false)
 {
@@ -128,19 +142,22 @@ inline bool joinDispatch(JoinKind kind, JoinStrictness strictness, MapsVariant &
         // See https://stackoverflow.com/questions/44386415/gcc-and-clang-disagree-about-c17-constexpr-lambda-captures
         constexpr auto i = ij / STRICTNESSES.size();
         constexpr auto j = ij % STRICTNESSES.size();
-        if (kind == KINDS[i] && strictness == STRICTNESSES[j])
+        if constexpr (!is_niche_hash_join_combo_v<KINDS[i], STRICTNESSES[j]>)
         {
-            if (prefer_use_maps_all)
-                func(
-                    std::integral_constant<JoinKind, KINDS[i]>(),
-                    std::integral_constant<JoinStrictness, STRICTNESSES[j]>(),
-                    std::get<typename MapGetter<KINDS[i], STRICTNESSES[j], true>::Map>(maps));
-            else
-                func(
-                    std::integral_constant<JoinKind, KINDS[i]>(),
-                    std::integral_constant<JoinStrictness, STRICTNESSES[j]>(),
-                    std::get<typename MapGetter<KINDS[i], STRICTNESSES[j], false>::Map>(maps));
-            return true;
+            if (kind == KINDS[i] && strictness == STRICTNESSES[j])
+            {
+                if (prefer_use_maps_all)
+                    func(
+                        std::integral_constant<JoinKind, KINDS[i]>(),
+                        std::integral_constant<JoinStrictness, STRICTNESSES[j]>(),
+                        std::get<typename MapGetter<KINDS[i], STRICTNESSES[j], true>::Map>(maps));
+                else
+                    func(
+                        std::integral_constant<JoinKind, KINDS[i]>(),
+                        std::integral_constant<JoinStrictness, STRICTNESSES[j]>(),
+                        std::get<typename MapGetter<KINDS[i], STRICTNESSES[j], false>::Map>(maps));
+                return true;
+            }
         }
         return false;
     });
@@ -156,34 +173,37 @@ inline bool joinDispatch(JoinKind kind, JoinStrictness strictness, std::vector<c
         // See https://stackoverflow.com/questions/44386415/gcc-and-clang-disagree-about-c17-constexpr-lambda-captures
         constexpr auto i = ij / STRICTNESSES.size();
         constexpr auto j = ij % STRICTNESSES.size();
-        if (kind == KINDS[i] && strictness == STRICTNESSES[j])
+        if constexpr (!is_niche_hash_join_combo_v<KINDS[i], STRICTNESSES[j]>)
         {
-            if (prefer_use_maps_all)
+            if (kind == KINDS[i] && strictness == STRICTNESSES[j])
             {
-                using MapType = typename MapGetter<KINDS[i], STRICTNESSES[j], true>::Map;
-                std::vector<const MapType *> v;
-                v.reserve(mapsv.size());
-                for (const auto & el : mapsv)
-                    v.push_back(&std::get<MapType>(*el));
+                if (prefer_use_maps_all)
+                {
+                    using MapType = typename MapGetter<KINDS[i], STRICTNESSES[j], true>::Map;
+                    std::vector<const MapType *> v;
+                    v.reserve(mapsv.size());
+                    for (const auto & el : mapsv)
+                        v.push_back(&std::get<MapType>(*el));
 
-                func(
-                    std::integral_constant<JoinKind, KINDS[i]>(), std::integral_constant<JoinStrictness, STRICTNESSES[j]>(), v
-                    /*std::get<typename MapGetter<KINDS[i], STRICTNESSES[j]>::Map>(maps)*/);
+                    func(
+                        std::integral_constant<JoinKind, KINDS[i]>(), std::integral_constant<JoinStrictness, STRICTNESSES[j]>(), v
+                        /*std::get<typename MapGetter<KINDS[i], STRICTNESSES[j]>::Map>(maps)*/);
+                }
+                else
+                {
+                    using MapType = typename MapGetter<KINDS[i], STRICTNESSES[j], false>::Map;
+                    std::vector<const MapType *> v;
+                    v.reserve(mapsv.size());
+                    for (const auto & el : mapsv)
+                        v.push_back(&std::get<MapType>(*el));
+
+                    func(
+                        std::integral_constant<JoinKind, KINDS[i]>(), std::integral_constant<JoinStrictness, STRICTNESSES[j]>(), v
+                        /*std::get<typename MapGetter<KINDS[i], STRICTNESSES[j]>::Map>(maps)*/);
+
+                }
+                return true;
             }
-            else
-            {
-                using MapType = typename MapGetter<KINDS[i], STRICTNESSES[j], false>::Map;
-                std::vector<const MapType *> v;
-                v.reserve(mapsv.size());
-                for (const auto & el : mapsv)
-                    v.push_back(&std::get<MapType>(*el));
-
-                func(
-                    std::integral_constant<JoinKind, KINDS[i]>(), std::integral_constant<JoinStrictness, STRICTNESSES[j]>(), v
-                    /*std::get<typename MapGetter<KINDS[i], STRICTNESSES[j]>::Map>(maps)*/);
-
-            }
-            return true;
         }
         return false;
     });
