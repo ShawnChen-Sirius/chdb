@@ -126,7 +126,7 @@ chdb-core is a c++ library meant to be imported by python.
 
 To build the c++ library, you must have a few prerequisites, amongst others:
 
-- clang 19
+- clang 21
 - make
 - cmake
 - ccache
