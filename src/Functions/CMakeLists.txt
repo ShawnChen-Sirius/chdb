@@ -79,6 +79,12 @@ if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
         stem.cpp
         wkt.cpp
         readWkt.cpp
+        # niche standalone functions
+        FunctionNaiveBayesClassifier.cpp
+        FunctionShowCertificate.cpp
+        FunctionFile.cpp
+        FunctionFQDN.cpp
+        filesystem.cpp
         # Vector / array distance (mostly used in vector search)
         arrayDistance.cpp
         arrayDotProduct.cpp
