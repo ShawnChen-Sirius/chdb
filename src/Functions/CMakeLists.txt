@@ -100,6 +100,14 @@ if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
         # Map ops (niche)
         mapPopulateSeries.cpp
         mapOp.cpp
+        # niche bit ops: shift / rotate (~6 MB unstripped)
+        bitShiftLeft.cpp
+        bitShiftRight.cpp
+        bitRotateLeft.cpp
+        bitRotateRight.cpp
+        # niche math: gcd / lcm (~2.8 MB unstripped)
+        gcd.cpp
+        lcm.cpp
         # niche
         bitHammingDistance.cpp
         FunctionsBitToArray.cpp
