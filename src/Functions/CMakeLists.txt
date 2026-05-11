@@ -61,9 +61,10 @@ if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
         moduloOrNull.cpp
         positiveModuloOrNull.cpp
         # Niche hash functions: keep Misc (it has cityHash64, xxHash, MD5, sipHash...)
-        # Drop only the truly niche RIPEMD/SSL ones
+        # Drop only the truly niche RIPEMD/SSL/Murmur ones (~6 MB unstripped)
         FunctionsHashingRipe.cpp
         FunctionsHashingSSL.cpp
+        FunctionsHashingMurmur.cpp
         # Niche string / encoding
         ascii.cpp
         soundex.cpp
