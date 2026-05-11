@@ -85,6 +85,17 @@ if (CHDB_MINIMAL_AGGREGATE_FUNCTIONS)
         AggregateFunctionTopK.cpp
         AggregateFunctionGroupArraySorted.cpp
         AggregateFunctionGroupBitmap.cpp
+        # Bitwise aggregates (groupBitOr/And/Xor) — niche, ~1.1 MB unstripped
+        AggregateFunctionBitwise.cpp
+        # sumMap / minMap / maxMap variants — niche, ~1.2 MB unstripped
+        AggregateFunctionSumMap.cpp
+        # groupArrayIntersect — niche, ~1 MB unstripped
+        AggregateFunctionGroupArrayIntersect.cpp
+        # Statistical moments: skewness/kurtosis — niche, ~1.7 MB unstripped
+        AggregateFunctionThirdMoment.cpp
+        AggregateFunctionFourthMoment.cpp
+        # groupUniqArray — fairly niche (collects unique values into array), ~1.5 MB unstripped
+        AggregateFunctionGroupUniqArray.cpp
     )
     set(_chdb_drop_regs
         registerAggregateFunctionsQuantileExactWeighted
@@ -152,6 +163,12 @@ if (CHDB_MINIMAL_AGGREGATE_FUNCTIONS)
         registerAggregateFunctionTopK
         registerAggregateFunctionGroupArraySorted
         registerAggregateFunctionsBitmap
+        registerAggregateFunctionsBitwise
+        registerAggregateFunctionSumMap
+        registerAggregateFunctionGroupArrayIntersect
+        registerAggregateFunctionsStatisticsThirdMoment
+        registerAggregateFunctionsStatisticsFourthMoment
+        registerAggregateFunctionGroupUniqArray
     )
     list(LENGTH _chdb_drop_files _n)
     math(EXPR _last "${_n} - 1")
