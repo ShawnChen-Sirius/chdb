@@ -156,6 +156,7 @@ if (CHDB_LITE)
         CHDB_TRIM_BIG_TYPES
         CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS
         CHDB_MINIMAL_AGGREGATE_FUNCTIONS
+        CHDB_TRIM_HASH_JOIN_ASOF
     )
     foreach (_flag IN LISTS _chdb_lite_trim_on)
         if (NOT DEFINED ${_flag})

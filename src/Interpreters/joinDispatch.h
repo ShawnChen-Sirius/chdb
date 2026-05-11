@@ -64,12 +64,22 @@ template <JoinKind kind, bool prefer_use_maps_all>
 struct MapGetter<kind, JoinStrictness::Asof, prefer_use_maps_all> { using Map = HashJoin::MapsAsof; static constexpr bool flagged = false; };
 
 #if defined(CHDB_MINIMAL_HASH_JOIN) && CHDB_MINIMAL_HASH_JOIN
-/// Trim niche strictnesses (Asof/Semi/Anti) to shrink hash-join binary size.
-/// Queries that use these will fail at runtime with "Wrong JOIN combination".
+/// Aggressive trim: drop Asof/Semi/Anti. WARNING: empirically this hangs SEMI/ANTI
+/// queries on chdb (not a clean throw), so the flag is currently kept OFF.
 static constexpr std::array<JoinStrictness, 3> STRICTNESSES = {
     JoinStrictness::RightAny,
     JoinStrictness::Any,
     JoinStrictness::All,
+};
+#elif defined(CHDB_TRIM_HASH_JOIN_ASOF) && CHDB_TRIM_HASH_JOIN_ASOF
+/// Safer trim: drop only Asof. SEMI / ANTI keep working. ASOF JOIN queries
+/// throw "Wrong JOIN combination" cleanly.
+static constexpr std::array<JoinStrictness, 5> STRICTNESSES = {
+    JoinStrictness::RightAny,
+    JoinStrictness::Any,
+    JoinStrictness::All,
+    JoinStrictness::Semi,
+    JoinStrictness::Anti,
 };
 #else
 static constexpr std::array<JoinStrictness, 6> STRICTNESSES = {
