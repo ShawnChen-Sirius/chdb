@@ -420,6 +420,62 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
+      # -----------------------------------------------------------------------
+      # chdb-core-lite: slim variant build & smoke test (~50 MB wheel)
+      # -----------------------------------------------------------------------
+      - name: Build chdb-core-lite (libchdb.so + _chdb.abi3.so)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 600
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          source ~/.cargo/env
+          pyenv shell 3.9
+          export CC=/usr/bin/clang
+          export CXX=/usr/bin/clang++
+          rm -rf buildlib
+          CHDB_LITE=1 bash ./chdb/build.sh
+        continue-on-error: false
+      - name: Build chdb-core-lite wheel
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          export CC=/usr/bin/clang
+          export CXX=/usr/bin/clang++
+          pyenv shell 3.9
+          CHDB_LITE=1 make wheel
+        continue-on-error: false
+      - name: Audit chdb-core-lite wheel
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          auditwheel -v repair -w dist/ --plat manylinux2014_aarch64 dist/chdb_core_lite-*linux_aarch64.whl
+          sudo rm -f dist/chdb_core_lite-*-linux_aarch64.whl
+          ls -lh dist
+        continue-on-error: false
+      - name: Smoke test chdb-core-lite wheel
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          for version in 3.9 3.11 3.13; do
+            echo "=== Testing chdb-core-lite on Python $version ==="
+            pyenv shell $version
+            python -m pip install dist/chdb_core_lite-*manylinux*.whl --force-reinstall
+            python -c "import chdb; r = chdb.query('SELECT 1+1, version()').data(); print(f'lite py{version}: {r}')"
+            python -c "import chdb; r = chdb.query('SELECT count(*), sum(number), uniq(number) FROM numbers(1000)').data(); print(f'agg: {r}')"
+            python -c "import chdb; r = chdb.query(\"SELECT a.k FROM (SELECT 1 AS k UNION ALL SELECT 2) a INNER JOIN (SELECT 1 AS k) b ON a.k=b.k\").data(); print(f'join: {r}')"
+            python -m pip uninstall -y chdb-core-lite
+            pyenv shell --unset
+          done
+        continue-on-error: false
+      - name: Restore pyproject.toml (chdb-core-lite build mutates it in place)
+        if: always()
+        run: |
+          git checkout -- pyproject.toml
       - name: Check and upload core files if present
         if: always()
         run: |
