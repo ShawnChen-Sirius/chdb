@@ -78,6 +78,27 @@ def get_latest_git_tag(minor_ver_auto=False):
         raise
 
 
+# When CHDB_LITE=1 in environment, rewrite pyproject.toml name to chdb-core-lite
+# so `pip install chdb-core-lite` resolves to this wheel. Idempotent and safe to
+# call multiple times.
+def maybe_rewrite_pyproject_name_for_lite():
+    if os.environ.get("CHDB_LITE", "0") != "1":
+        return
+    pyproject_file = os.path.join(script_dir, "pyproject.toml")
+    with open(pyproject_file, "r") as f:
+        content = f.read()
+    new_content = re.sub(
+        r'^name\s*=\s*"chdb-core"\s*$',
+        'name = "chdb-core-lite"',
+        content,
+        flags=re.MULTILINE,
+    )
+    if new_content != content:
+        with open(pyproject_file, "w") as f:
+            f.write(new_content)
+        print("CHDB_LITE=1: rewrote pyproject.toml name to chdb-core-lite")
+
+
 # Update version in pyproject.toml
 def update_pyproject_version(version):
     pyproject_file = os.path.join(script_dir, "pyproject.toml")
@@ -142,6 +163,10 @@ class BuildExt(build_ext):
 # this will be executed by python setup.py bdist_wheel
 if __name__ == "__main__":
     try:
+        # If CHDB_LITE=1, rewrite pyproject.toml name to chdb-core-lite
+        # (must happen before setup() reads project metadata)
+        maybe_rewrite_pyproject_name_for_lite()
+
         # get python extension file name
         chdb_so = libdir + "/_chdb" + get_python_ext_suffix()
         ext_modules = [

@@ -114,6 +114,107 @@ if (ENABLE_PYTHON)
     set(USE_UTF8PROC 1)
 endif()
 
+# -----------------------------------------------------------------------------
+# CHDB_LITE: umbrella flag for building the slim chdb-core-lite variant.
+# When ON, auto-enables all CHDB_TRIM_* flags, disables ~30 optional libraries,
+# switches to MinSizeRel, and adds RELR linker flag. Users can still override
+# any individual flag by passing -D<flag>=... explicitly.
+#
+# Build chdb-core (default, full ~158 MB):
+#     bash chdb/build.sh
+# Build chdb-core-lite (~50 MB):
+#     CHDB_LITE=1 bash chdb/build.sh   # or pass -DCHDB_LITE=ON to cmake
+# -----------------------------------------------------------------------------
+option(CHDB_LITE "Build slim chdb-core-lite variant (~50 MB wheel, fewer features)" OFF)
+
+# Allow env var to flip the flag for build.sh callers
+if (NOT CHDB_LITE AND DEFINED ENV{CHDB_LITE} AND "$ENV{CHDB_LITE}" STREQUAL "1")
+    set(CHDB_LITE ON CACHE BOOL "Enabled via CHDB_LITE env var" FORCE)
+endif()
+
+if (CHDB_LITE)
+    message(STATUS "")
+    message(STATUS "=== CHDB_LITE: building chdb-core-lite (slim) variant ===")
+    message(STATUS "")
+
+    # MinSizeRel for size optimization (-Os)
+    if (NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "None" OR CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(CMAKE_BUILD_TYPE MinSizeRel CACHE STRING "Forced by CHDB_LITE" FORCE)
+    endif()
+
+    # Auto-enable all chdb-specific trim flags (user can still pass -D<flag>=OFF to override)
+    set(_chdb_lite_trim_on
+        CHDB_TRIM_WEB_UI
+        CHDB_TRIM_HEAVY_DICTIONARIES
+        CHDB_TRIM_LICENSES
+        CHDB_TRIM_VECTOR_DISTANCE
+        CHDB_TRIM_TLD_LOOKUP
+        CHDB_TRIM_NICHE_STORAGES
+        CHDB_TRIM_AWS_GLUE
+        CHDB_TRIM_UNWIND_TABLES
+        CHDB_TRIM_FUNCTION_SECTIONS
+        CHDB_TRIM_BIG_TYPES
+        CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS
+        CHDB_MINIMAL_AGGREGATE_FUNCTIONS
+    )
+    foreach (_flag IN LISTS _chdb_lite_trim_on)
+        if (NOT DEFINED ${_flag})
+            set(${_flag} ON CACHE BOOL "Auto-enabled by CHDB_LITE")
+        endif()
+    endforeach()
+
+    # Master switch: ENABLE_LIBRARIES=0 turns off all optional libs by default;
+    # we then opt-in only what chdb-core-lite needs.
+    if (NOT DEFINED ENABLE_LIBRARIES)
+        set(ENABLE_LIBRARIES OFF CACHE BOOL "Auto-disabled by CHDB_LITE")
+    endif()
+
+    # Heavy / niche optional libs explicitly disabled
+    set(_chdb_lite_libs_off
+        ENABLE_HDFS ENABLE_GSASL_LIBRARY ENABLE_KRB5
+        ENABLE_MYSQL ENABLE_LIBPQXX
+        ENABLE_AZURE_BLOB_STORAGE ENABLE_HIVE
+        ENABLE_AVRO ENABLE_ROCKSDB ENABLE_SQLITE
+        ENABLE_KAFKA ENABLE_NATS ENABLE_AMQPCPP ENABLE_NURAFT
+        ENABLE_CASSANDRA ENABLE_ODBC ENABLE_NLP ENABLE_LDAP
+        ENABLE_RUST ENABLE_DELTA_KERNEL_RS
+        ENABLE_VECTORSCAN ENABLE_MSGPACK
+        ENABLE_H3 ENABLE_CLIENT_AI ENABLE_LIBFIU
+        ENABLE_EMBEDDED_COMPILER ENABLE_DWARF_PARSER
+        ENABLE_ICU ENABLE_S2_GEOMETRY ENABLE_USEARCH ENABLE_SIMSIMD
+        ENABLE_BCRYPT ENABLE_BZIP2 ENABLE_CAPNP ENABLE_DATASKETCHES
+        ENABLE_FASTOPS ENABLE_GRPC ENABLE_IDNA ENABLE_JWT_CPP
+        ENABLE_LIBURING ENABLE_MINIZIP ENABLE_POCKETFFT
+        ENABLE_SIMDCOMP ENABLE_SQIDS ENABLE_SSH ENABLE_ULID
+        ENABLE_YAML_CPP ENABLE_BASE64
+        ENABLE_GOOGLE_CLOUD_CPP ENABLE_GOOGLE_CLOUD_CPP_KMS
+        ENABLE_XRAY
+    )
+    foreach (_flag IN LISTS _chdb_lite_libs_off)
+        if (NOT DEFINED ${_flag})
+            set(${_flag} OFF CACHE BOOL "Auto-disabled by CHDB_LITE")
+        endif()
+    endforeach()
+
+    # Opt-in: features chdb-core-lite needs to keep working
+    set(_chdb_lite_libs_on
+        ENABLE_PARQUET ENABLE_THRIFT ENABLE_RAPIDJSON
+        ENABLE_PROTOBUF ENABLE_BROTLI
+        ENABLE_AWS_S3 ENABLE_CURL
+        ENABLE_SIMDJSON
+        ENABLE_JEMALLOC ENABLE_UTF8PROC
+    )
+    foreach (_flag IN LISTS _chdb_lite_libs_on)
+        if (NOT DEFINED ${_flag})
+            set(${_flag} ON CACHE BOOL "Kept enabled by CHDB_LITE")
+        endif()
+    endforeach()
+
+    # RELR: pack relative relocations (.rela.dyn 14.5 MiB -> ~1 MiB)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,pack-relative-relocs")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,pack-relative-relocs")
+endif()
+
 option (ENABLE_XRAY "Enable LLVM XRay" ON)
 
 if (NOT ENABLE_XRAY)
