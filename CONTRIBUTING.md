@@ -126,13 +126,13 @@ chdb-core is a c++ library meant to be imported by python.
 
 To build the c++ library, you must have a few prerequisites, amongst others:
 
-- clang 21
+- clang: Minimum version can be found in [`cmake/tools.cmake`](cmake/tools.cmake), search for `CLANG_MINIMUM_VERSION`
+- Rust: Version can be found in [`rust/vendor.sh`](rust/vendor.sh), search for `TOOLCHAIN`
 - make
 - cmake
 - ccache
 - patchelf
 - yasm
-- Rust nightly 2025-07-07
 
 And some python-specific ones:
 
