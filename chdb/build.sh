@@ -153,15 +153,13 @@ if ! command -v ccache >/dev/null 2>&1 && ! command -v sccache >/dev/null 2>&1; 
 fi
 
 LIBCHDB_SO="libchdb.so"
+BINARY=${BUILD_DIR}/programs/clickhouse
 # chdb-core-lite only ships the Python module (_chdb.abi3.so), so skip the
 # standalone libchdb.so build entirely. It saves ~half the link time.
 if [ "${CHDB_LITE}" != "1" ]; then
     # Build libchdb.so
     cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ${PROJ_DIR}
     ninja -d keeprsp
-
-
-    BINARY=${BUILD_DIR}/programs/clickhouse
     echo -e "\nBINARY: ${BINARY}"
     ls -lh ${BINARY}
     echo -e "\nldd ${BINARY}"
