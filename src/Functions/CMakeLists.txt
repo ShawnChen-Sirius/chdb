@@ -160,6 +160,9 @@ if (CHDB_MINIMAL_FUNCTIONS)
         "${CMAKE_CURRENT_SOURCE_DIR}/checkHyperscanRegexp.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/CastOverloadResolver.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion.cpp"
+        # impl00.cpp: FunctionConvert<UInt8> — the v26.3-era successor to the old
+        # single-file impl0.cpp; needed for basic toUInt8 to link.
+        "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl00.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl1.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl2.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/FunctionsConversion_impl3.cpp"
