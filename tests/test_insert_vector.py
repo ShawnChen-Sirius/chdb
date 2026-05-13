@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import time
 import unittest
 import random
@@ -57,8 +58,7 @@ class TestInsertArray(unittest.TestCase):
         # by the Word2Vec algorithm just extract the movie similarity info from
         # users' movie ratings without any extra data.
         global chs
-        topN = chs.query(
-            """
+        sql = """
                   WITH
                     100 AS theMovieId,
                     (SELECT embedding FROM embeddings WHERE movieId = theMovieId LIMIT 1) AS targetEmbedding
@@ -70,7 +70,15 @@ class TestInsertArray(unittest.TestCase):
                     ORDER BY distance ASC
                     LIMIT 5
                   """
-        )
+        if os.environ.get("CHDB_LITE") == "1":
+            # chdb-core-lite trims cosineDistance(array, array) — the array variant's
+            # factory is stubbed to throw NOT_IMPLEMENTED (Code 48). Tuple variant
+            # `cosineDistance((a,b), (c,d))` would still work but isn't relevant here.
+            with self.assertRaises(Exception) as ctx:
+                chs.query(sql)
+            self.assertIn("Code: 48", str(ctx.exception))
+            return
+        topN = chs.query(sql)
         print(
             f"Scaned {topN.rows_read()} rows, "
             f"Top 5 similar movies to movieId 100 in {topN.elapsed()}"
