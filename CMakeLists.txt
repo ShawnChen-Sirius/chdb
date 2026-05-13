@@ -116,9 +116,9 @@ endif()
 
 # -----------------------------------------------------------------------------
 # CHDB_LITE: umbrella flag for building the slim chdb-core-lite variant.
-# When ON, auto-enables all CHDB_TRIM_* flags, disables ~30 optional libraries,
-# switches to MinSizeRel, and adds RELR linker flag. Users can still override
-# any individual flag by passing -D<flag>=... explicitly.
+# When ON, gates all chdb trim sites (CMake `if (CHDB_LITE)` plus C++
+# `#if defined(CHDB_LITE) && CHDB_LITE`), disables ~30 optional libraries,
+# switches to MinSizeRel, and adds the RELR linker flag.
 #
 # Build chdb-core (default, full ~158 MB):
 #     bash chdb/build.sh
@@ -142,25 +142,9 @@ if (CHDB_LITE)
         set(CMAKE_BUILD_TYPE MinSizeRel CACHE STRING "Forced by CHDB_LITE" FORCE)
     endif()
 
-    # Auto-enable all chdb-specific trim flags (user can still pass -D<flag>=OFF to override)
-    set(_chdb_lite_trim_on
-        CHDB_TRIM_WEB_UI
-        CHDB_TRIM_HEAVY_DICTIONARIES
-        CHDB_TRIM_LICENSES
-        CHDB_TRIM_VECTOR_DISTANCE
-        CHDB_TRIM_TLD_LOOKUP
-        CHDB_TRIM_NICHE_STORAGES
-        CHDB_TRIM_UNWIND_TABLES
-        CHDB_TRIM_FUNCTION_SECTIONS
-        CHDB_TRIM_BIG_TYPES
-        CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS
-        CHDB_MINIMAL_AGGREGATE_FUNCTIONS
-    )
-    foreach (_flag IN LISTS _chdb_lite_trim_on)
-        if (NOT DEFINED ${_flag})
-            set(${_flag} ON CACHE BOOL "Auto-enabled by CHDB_LITE")
-        endif()
-    endforeach()
+    # CHDB_LITE=1 is the single switch read by all trim sites (CMake `if (CHDB_LITE)`
+    # and C++ `#if defined(CHDB_LITE) && CHDB_LITE`).
+    add_compile_definitions(CHDB_LITE=1)
 
     # Master switch: ENABLE_LIBRARIES=0 turns off all optional libs by default;
     # we then opt-in only what chdb-core-lite needs.
@@ -359,7 +343,7 @@ if (NOT OS_DARWIN)
     # Asynchronous unwind tables are needed for Query Profiler.
     # They are already by default on some platforms but possibly not on all platforms.
     # Enable it explicitly.
-    if (CHDB_TRIM_UNWIND_TABLES)
+    if (CHDB_LITE)
         # chdb embedded build: query profiler is not used, drop async unwind tables
         # to shrink .eh_frame by several MB. C++ exception handling still works
         # via .eh_frame entries that compiler emits for functions that throw.
@@ -420,7 +404,7 @@ set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffp-contract=off")
 
 set (COMPILER_FLAGS "${COMPILER_FLAGS} -fPIC")
 
-if (CHDB_TRIM_FUNCTION_SECTIONS)
+if (CHDB_LITE)
     # Place each function/datum in its own section so the linker's --gc-sections can
     # remove unreferenced ones (otherwise dead code in the same TU as live code is kept).
     set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffunction-sections -fdata-sections")

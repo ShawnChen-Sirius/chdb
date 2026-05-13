@@ -829,7 +829,7 @@ class FunctionBinaryArithmetic : public IFunction
 
     static bool castType(const IDataType * type, auto && f)
     {
-#if defined(CHDB_TRIM_BIG_TYPES) && CHDB_TRIM_BIG_TYPES
+#if defined(CHDB_LITE) && CHDB_LITE
         // Drop UInt128/256, Int128/256, Decimal128/256, BFloat16 to shrink template
         // instantiation matrix. Queries on these types fall back to common-supertype.
         using IntegerTypes = TypeList<

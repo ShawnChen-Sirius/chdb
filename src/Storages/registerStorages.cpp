@@ -121,7 +121,7 @@ void registerStorages()
     registerStorageNull(factory);
     registerStorageMerge(factory);
     registerStorageBuffer(factory);
-#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
+#if !defined(CHDB_LITE) || !CHDB_LITE
     registerStorageDistributed(factory);
 #endif
     registerStorageMemory(factory);
@@ -134,7 +134,7 @@ void registerStorages()
     registerStorageMaterializedView(factory);
     registerStorageGenerateRandom(factory);
     registerStorageExecutable(factory);
-#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
+#if !defined(CHDB_LITE) || !CHDB_LITE
     registerStorageWindowView(factory);
 #endif
     registerStorageLoop(factory);
@@ -216,7 +216,7 @@ void registerStorages()
     registerStorageSQLite(factory);
 #endif
 
-#if !defined(CHDB_TRIM_NICHE_STORAGES) || !CHDB_TRIM_NICHE_STORAGES
+#if !defined(CHDB_LITE) || !CHDB_LITE
     registerStorageKeeperMap(factory);
 #endif
 

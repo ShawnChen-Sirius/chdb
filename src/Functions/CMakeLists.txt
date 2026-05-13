@@ -3,14 +3,13 @@ add_subdirectory(divide)
 include("${ClickHouse_SOURCE_DIR}/cmake/dbms_glob_sources.cmake")
 add_headers_and_sources(clickhouse_functions .)
 
-option(CHDB_TRIM_BIG_TYPES "Drop Int128/Int256/UInt128/UInt256/Decimal128/Decimal256/BFloat16 from comparison/arithmetic template instantiation matrices" OFF)
-if (CHDB_TRIM_BIG_TYPES)
-    add_compile_definitions(CHDB_TRIM_BIG_TYPES=1)
-endif()
+# Big-type comparison/arithmetic matrix trim (Int128/Int256/UInt128/UInt256/Decimal128/Decimal256/BFloat16)
+# is gated in FunctionsComparison.h / FunctionBinaryArithmetic.h via
+# `#if defined(CHDB_LITE) && CHDB_LITE` — umbrella's add_compile_definitions(CHDB_LITE=1) is enough.
 
-option(CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS "Drop heavy niche scalar functions (polygons, NumericIndexedVector, etc.)" OFF)
-if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
-    message(STATUS "CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS: dropping niche heavy scalar functions")
+if (CHDB_LITE)
+    # chdb embedded build: drop heavy niche scalar functions (polygons, NumericIndexedVector, etc.).
+    message(STATUS "CHDB_LITE: dropping niche heavy scalar functions")
     set(_chdb_drop_funcs
         # Polygon family - heavy boost::geometry templates, niche
         pointInPolygon.cpp
@@ -70,7 +69,7 @@ if (CHDB_TRIM_HEAVY_SCALAR_FUNCTIONS)
         FunctionsStringHash.cpp
         # Roaring-bitmap functions (bitmapBuild, bitmapAnd, etc.). They consume
         # AggregateFunction(groupBitmap) blobs, which we already drop via
-        # CHDB_MINIMAL_AGGREGATE_FUNCTIONS, so these are dead in chdb-core-lite.
+        # CHDB_LITE drops it from the aggregate library too, so these are dead in chdb-core-lite.
         # ~2.5 MB unstripped.
         FunctionsBitmap.cpp
         # Niche string / encoding

@@ -110,7 +110,7 @@ cd ${BUILD_DIR}
 
 if [ "${CHDB_LITE}" = "1" ]; then
     # chdb-core-lite for macOS: minimal arg list; the CHDB_LITE block in
-    # CMakeLists.txt fills in all CHDB_TRIM_*=1 / ENABLE_*=0 / linker flags.
+    # CMakeLists.txt fills in all trim flags / ENABLE_*=0 / linker flags.
     # macOS-specific opt-outs (JEMALLOC=0, ICU=0, GLIBC_COMPATIBILITY=0, UNWIND=0)
     # are passed explicitly here; the umbrella's `if (NOT DEFINED ${_flag})` guard
     # preserves them.

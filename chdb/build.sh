@@ -97,7 +97,7 @@ cd ${BUILD_DIR}
 
 if [ "${CHDB_LITE}" = "1" ]; then
     # chdb-core-lite: keep this argument list minimal. CMakeLists.txt's
-    # CHDB_LITE block fills in all ENABLE_*=0 / CHDB_TRIM_*=1 / linker flags.
+    # CHDB_LITE block fills in all ENABLE_*=0 / trim flags / linker flags.
     # MinSizeRel is forced by the CHDB_LITE block too, but we override if user
     # passed a different build_type explicitly.
     CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_TESTS=0 -DCHDB_LITE=ON \

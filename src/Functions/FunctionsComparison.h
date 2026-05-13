@@ -786,7 +786,7 @@ private:
         ColumnPtr res = nullptr;
         if (const ColumnVector<T0> * col_left = checkAndGetColumn<ColumnVector<T0>>(col_left_untyped))
         {
-#if defined(CHDB_TRIM_BIG_TYPES) && CHDB_TRIM_BIG_TYPES
+#if defined(CHDB_LITE) && CHDB_LITE
             if (   (res = executeNumRightType<T0, UInt8>(col_left, col_right_untyped))
                 || (res = executeNumRightType<T0, UInt16>(col_left, col_right_untyped))
                 || (res = executeNumRightType<T0, UInt32>(col_left, col_right_untyped))
@@ -820,7 +820,7 @@ private:
         }
         if (auto col_left_const = checkAndGetColumnConst<ColumnVector<T0>>(col_left_untyped))
         {
-#if defined(CHDB_TRIM_BIG_TYPES) && CHDB_TRIM_BIG_TYPES
+#if defined(CHDB_LITE) && CHDB_LITE
             if ((res = executeNumConstRightType<T0, UInt8>(col_left_const, col_right_untyped))
                 || (res = executeNumConstRightType<T0, UInt16>(col_left_const, col_right_untyped))
                 || (res = executeNumConstRightType<T0, UInt32>(col_left_const, col_right_untyped))
@@ -1441,7 +1441,7 @@ public:
         if (left_is_num && right_is_num && !date_and_time_datetime
             && (!left_is_interval || !right_is_interval || types_equal))
         {
-#if defined(CHDB_TRIM_BIG_TYPES) && CHDB_TRIM_BIG_TYPES
+#if defined(CHDB_LITE) && CHDB_LITE
             if (!((res = executeNumLeftType<UInt8>(col_left_untyped, col_right_untyped))
                 || (res = executeNumLeftType<UInt16>(col_left_untyped, col_right_untyped))
                 || (res = executeNumLeftType<UInt32>(col_left_untyped, col_right_untyped))

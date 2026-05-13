@@ -1,9 +1,9 @@
 include("${ClickHouse_SOURCE_DIR}/cmake/dbms_glob_sources.cmake")
 add_headers_and_sources(clickhouse_functions_url .)
 
-option(CHDB_TRIM_TLD_LOOKUP "Replace 1.7 MB embedded TLD list with empty stub (no TLD-aware URL parsing)" OFF)
-if (CHDB_TRIM_TLD_LOOKUP)
-    message(STATUS "CHDB_TRIM_TLD_LOOKUP: stubbing TopLevelDomainLookupHash::isValid")
+if (CHDB_LITE)
+    # chdb embedded build: replace 1.7 MB embedded TLD list with empty stub.
+    message(STATUS "CHDB_LITE: stubbing TopLevelDomainLookupHash::isValid")
     list(REMOVE_ITEM clickhouse_functions_url_sources "tldLookup.generated.cpp" "./tldLookup.generated.cpp")
     set(_chdb_tld_stub "${CMAKE_CURRENT_BINARY_DIR}/chdbTldStub.cpp")
     file(WRITE "${_chdb_tld_stub}"
@@ -16,7 +16,7 @@ endif()
 
 add_library(clickhouse_functions_url OBJECT ${clickhouse_functions_url_sources} ${clickhouse_functions_url_headers})
 target_link_libraries(clickhouse_functions_url PRIVATE dbms)
-if (NOT CHDB_TRIM_TLD_LOOKUP)
+if (NOT CHDB_LITE)
     set_source_files_properties(tldLookup.generated.cpp PROPERTIES COMPILE_FLAGS -Wno-shorten-64-to-32)
 endif()
 

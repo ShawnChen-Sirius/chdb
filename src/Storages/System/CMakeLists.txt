@@ -35,10 +35,10 @@ add_dependencies(generate-source generate-contributors)
 
 set(GENERATED_LICENSES_SRC "${CMAKE_CURRENT_BINARY_DIR}/StorageSystemLicenses.generated.cpp")
 
-if (CHDB_TRIM_LICENSES)
+if (CHDB_LITE)
     # chdb embedded build: don't ship 11 MB of contributor license text in the binary.
     # system.licenses will be empty.
-    message(STATUS "CHDB_TRIM_LICENSES: stubbing system.licenses (empty)")
+    message(STATUS "CHDB_LITE: stubbing system.licenses (empty)")
     file(WRITE ${GENERATED_LICENSES_SRC} "// chdb stub: system.licenses empty\nconst char * library_licenses[] = { nullptr };\n")
 else()
     # Generate license data at configure time to avoid creating a build-time dependency

@@ -7,10 +7,10 @@ file(MAKE_DIRECTORY "${CLICKSTACK_DIR}")
 # Generated file location
 set(CLICKSTACK_RESOURCES_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/ClickStackResources.generated.h")
 
-if (CHDB_TRIM_WEB_UI)
+if (CHDB_LITE)
     # Generate an empty stub: chdb is embedded, no HTTP server, no observability dashboard.
-    # This drops ~4 MB of pre-gzipped JS/HTML from the binary.
-    message(STATUS "CHDB_TRIM_WEB_UI: stubbing ClickStack embedded resources (empty array)")
+    # This drops ~3 MB of pre-gzipped JS/HTML from the binary.
+    message(STATUS "CHDB_LITE: stubbing ClickStack embedded resources (empty array)")
     file(WRITE "${CLICKSTACK_RESOURCES_GENERATED}"
         "// chdb stub - empty\n#pragma once\n#include <array>\n#include <string_view>\nnamespace DB::ClickStack\n{\nstruct EmbeddedResource\n{\n    std::string_view path;\n    const unsigned char* data;\n    size_t size;\n    std::string_view mime_type;\n};\nconstexpr std::array<EmbeddedResource, 0> embedded_resources = {};\n}\n")
     add_custom_target(clickstack_resources_gen)
@@ -37,7 +37,7 @@ else()
     )
 endif()
 
-if (NOT CHDB_TRIM_WEB_UI)
+if (NOT CHDB_LITE)
     # Create a custom target to ensure the file is generated
     add_custom_target(clickstack_resources_gen
         DEPENDS "${CLICKSTACK_RESOURCES_GENERATED}"

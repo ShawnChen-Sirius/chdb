@@ -38,7 +38,7 @@ AggregateFunctionPtr createAggregateFunctionUniqCombined(bool use_64_bit_hash,
 
     switch (precision) // NOLINT(bugprone-switch-missing-default-case)
     {
-#if defined(CHDB_MINIMAL_AGGREGATE_FUNCTIONS) && CHDB_MINIMAL_AGGREGATE_FUNCTIONS
+#if defined(CHDB_LITE) && CHDB_LITE
         case 17:
             return createAggregateFunctionWithHashType<17>(use_64_bit_hash, argument_types, params);
         default:

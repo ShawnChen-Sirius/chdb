@@ -302,10 +302,9 @@ add_object_library(clickhouse_planner Planner)
 add_object_library(clickhouse_interpreters Interpreters)
 add_object_library(clickhouse_interpreters_cache Interpreters/Cache)
 add_object_library(clickhouse_interpreters_hash_join Interpreters/HashJoin)
-option(CHDB_TRIM_NICHE_STORAGES "Skip registering niche storage engines (Distributed/WindowView/KeeperMap) so --gc-sections can drop them" OFF)
-if (CHDB_TRIM_NICHE_STORAGES)
-    add_compile_definitions(CHDB_TRIM_NICHE_STORAGES=1)
-endif()
+# Niche storage engines (Distributed/WindowView/KeeperMap) — gated in registerStorages.cpp
+# via `#if defined(CHDB_LITE) && CHDB_LITE`; the umbrella's add_compile_definitions(CHDB_LITE=1)
+# is enough, no per-trim flag needed.
 option(CHDB_MINIMAL_HASH_JOIN "Drop niche hash-join variants (ASOF/ANTI/SEMI) to reduce binary size" OFF)
 if (CHDB_MINIMAL_HASH_JOIN)
     message(STATUS "CHDB_MINIMAL_HASH_JOIN: dropping ASOF/ANTI/SEMI hash-join variants")

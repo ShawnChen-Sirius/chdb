@@ -3,10 +3,9 @@ add_headers_and_sources(clickhouse_aggregate_functions .)
 add_headers_and_sources(clickhouse_aggregate_functions Combinators)
 add_headers_and_sources(clickhouse_aggregate_functions TimeSeries)
 
-option(CHDB_MINIMAL_AGGREGATE_FUNCTIONS "Drop niche / heavy aggregate functions to reduce binary size" OFF)
-if (CHDB_MINIMAL_AGGREGATE_FUNCTIONS)
-    message(STATUS "CHDB_MINIMAL_AGGREGATE_FUNCTIONS: dropping niche aggregates")
-    add_compile_definitions(CHDB_MINIMAL_AGGREGATE_FUNCTIONS=1)
+if (CHDB_LITE)
+    # chdb embedded build: drop niche / heavy aggregate functions to reduce binary size.
+    message(STATUS "CHDB_LITE: dropping niche aggregates")
     # Each entry: <filename>;<exact register_fn name from registerAggregateFunctions.cpp>
     # Drop only files whose register fn name we know precisely; we generate stubs
     # so the central registerAggregateFunctions.cpp still links.
@@ -71,7 +70,7 @@ if (CHDB_MINIMAL_AGGREGATE_FUNCTIONS)
         AggregateFunctionCovar.cpp
         AggregateFunctionCorr.cpp
         # uniqCombined precision variants: keep 17 (default), drop 12-16 and 18-20.
-        # The switch in AggregateFunctionUniqCombined.cpp is gated by CHDB_MINIMAL_AGGREGATE_FUNCTIONS
+        # The switch in AggregateFunctionUniqCombined.cpp is gated by CHDB_LITE
         # to throw at runtime if a non-17 precision is requested.
         AggregateFunctionUniqCombined12.cpp
         AggregateFunctionUniqCombined13.cpp
