@@ -11,8 +11,15 @@ set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 
 # Control maximum size of stack frames. It can be important if the code is run in fibers with small stack size.
 # Only in release build because debug has too large stack frames.
+# chdb-core-lite uses MinSizeRel (-Os) + heavy trim flags, some TUs cross the
+# upstream 65536 threshold; relax to 131072 only for lite, keep upstream default
+# for the regular chdb-core build.
 if ((NOT CMAKE_BUILD_TYPE_UC STREQUAL "DEBUG") AND (NOT SANITIZE))
-    add_warning(frame-larger-than=131072)
+    if (CHDB_LITE)
+        add_warning(frame-larger-than=131072)
+    else()
+        add_warning(frame-larger-than=65536)
+    endif()
 endif ()
 
 # Add some warnings that are not available even with -Wall -Wextra -Wpedantic.
