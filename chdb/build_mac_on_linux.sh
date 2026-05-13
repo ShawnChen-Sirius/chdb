@@ -173,6 +173,7 @@ else
 fi
 
 LIBCHDB_SO="libchdb.so"
+BINARY=${BUILD_DIR}/programs/clickhouse
 
 # chdb-core-lite only ships the Python module (_chdb.abi3.so); skip the
 # standalone libchdb.so cross-compile path entirely.
@@ -181,8 +182,6 @@ if [ "${CHDB_LITE}" != "1" ]; then
     echo "Executing cmake..."
     cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ..
     ninja -d keeprsp
-
-    BINARY=${BUILD_DIR}/programs/clickhouse
     echo -e "\nBINARY: ${BINARY}"
     ls -lh ${BINARY}
     echo -e "\nfile info of ${BINARY}"
