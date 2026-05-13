@@ -193,12 +193,10 @@ if (CHDB_LITE)
         endif()
     endforeach()
 
-    # RELR: pack relative relocations (.rela.dyn 14.5 MiB -> ~1 MiB).
-    # ELF/GNU ld-only — macOS Mach-O ld64 rejects the flag.
-    if (OS_LINUX)
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,pack-relative-relocs")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,pack-relative-relocs")
-    endif()
+    # RELR (-Wl,-z,pack-relative-relocs) would shrink .rela.dyn by ~13 MiB
+    # but injects a GLIBC_ABI_DT_RELR symbol version that auditwheel rejects
+    # for every manylinux policy (RELR needs glibc 2.36+). Keep classic relocs
+    # so the wheel passes auditwheel repair against manylinux2014.
 endif()
 
 option (ENABLE_XRAY "Enable LLVM XRay" ON)
