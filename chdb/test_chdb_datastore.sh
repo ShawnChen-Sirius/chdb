@@ -38,7 +38,9 @@ echo "chdb-core engine version: ${CORE_VERSION}"
 
 if [ -z "${CHDB_TAG:-}" ]; then
     echo "Resolving latest chdb release tag from GitHub..."
-    CHDB_TAG=$(curl -fsSL https://api.github.com/repos/chdb-io/chdb/releases/latest \
+    CHDB_TAG=$(curl -fsSL \
+        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+        https://api.github.com/repos/chdb-io/chdb/releases/latest \
         | ${PYTHON} -c "import json, sys; print(json.load(sys.stdin)['tag_name'])")
 fi
 echo "Using chdb tag: ${CHDB_TAG}"
