@@ -95,6 +95,18 @@ if (CHDB_LITE)
         AggregateFunctionFourthMoment.cpp
         # groupUniqArray — fairly niche (collects unique values into array), ~1.5 MB unstripped
         AggregateFunctionGroupUniqArray.cpp
+        # Extra niche aggregates: uniqUpTo (caps cardinality), quantilePrometheus,
+        # studentTTestOneSample, varianceMatrix, anyHeavy, meanZTest, groupConcat,
+        # distinctJSONPathsAndTypes, estimateCompressionRatio — ~3 MB unstripped total.
+        AggregateFunctionUniqUpTo.cpp
+        AggregateFunctionQuantilePrometheusHistogram.cpp
+        AggregateFunctionStudentTTestOneSample.cpp
+        AggregateFunctionVarianceMatrix.cpp
+        AggregateFunctionAnyHeavy.cpp
+        AggregateFunctionMeanZTest.cpp
+        AggregateFunctionGroupConcat.cpp
+        AggregateFunctionDistinctJSONPaths.cpp
+        AggregateFunctionEstimateCompressionRatio.cpp
     )
     set(_chdb_drop_regs
         registerAggregateFunctionsQuantileExactWeighted
@@ -168,6 +180,15 @@ if (CHDB_LITE)
         registerAggregateFunctionsStatisticsThirdMoment
         registerAggregateFunctionsStatisticsFourthMoment
         registerAggregateFunctionGroupUniqArray
+        registerAggregateFunctionUniqUpTo
+        registerAggregateFunctionsQuantilePrometheusHistogram
+        registerAggregateFunctionStudentTTestOneSample
+        registerAggregateFunctionsVarianceMatrix
+        registerAggregateFunctionAnyHeavy
+        registerAggregateFunctionMeanZTest
+        registerAggregateFunctionGroupConcat
+        registerAggregateFunctionDistinctJSONPathsAndTypes
+        registerAggregateFunctionEstimateCompressionRatio
     )
     list(LENGTH _chdb_drop_files _n)
     math(EXPR _last "${_n} - 1")

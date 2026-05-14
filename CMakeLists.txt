@@ -137,7 +137,8 @@ if (CHDB_LITE)
     message(STATUS "=== CHDB_LITE: building chdb-core-lite (slim) variant ===")
     message(STATUS "")
 
-    # MinSizeRel for size optimization (-Os)
+    # MinSizeRel for size optimization (-Os). -Oz is more aggressive but broke
+    # the libllvmlibc archive (eliminated cross-TU statics like libc_errno).
     if (NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "None" OR CMAKE_BUILD_TYPE STREQUAL "Release")
         set(CMAKE_BUILD_TYPE MinSizeRel CACHE STRING "Forced by CHDB_LITE" FORCE)
     endif()
@@ -145,6 +146,9 @@ if (CHDB_LITE)
     # CHDB_LITE=1 is the single switch read by all trim sites (CMake `if (CHDB_LITE)`
     # and C++ `#if defined(CHDB_LITE) && CHDB_LITE`).
     add_compile_definitions(CHDB_LITE=1)
+    # ENABLE_MULTITARGET_CODE is intentionally LEFT ON: turning it off saves
+    # ~1.5 MB wheel but costs 5-15% on hash/aggregation-heavy workloads
+    # (uniq/uniqCombined, GROUP BY with many keys, hash-join build phase).
 
     # Master switch: ENABLE_LIBRARIES=0 turns off all optional libs by default;
     # we then opt-in only what chdb-core-lite needs.

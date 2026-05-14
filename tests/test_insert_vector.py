@@ -71,12 +71,13 @@ class TestInsertArray(unittest.TestCase):
                     LIMIT 5
                   """
         if os.environ.get("CHDB_LITE") == "1":
-            # chdb-core-lite trims cosineDistance(array, array) — the array variant's
-            # factory is stubbed to throw NOT_IMPLEMENTED (Code 48). Tuple variant
-            # `cosineDistance((a,b), (c,d))` would still work but isn't relevant here.
+            # chdb-core-lite drops the entire vector-distance family from
+            # vectorFunctions (cosineDistance, L1/L2/LpDistance, all norms,
+            # normalizes, dotProduct, transposed). Both tuple and array variants
+            # raise Code 46 (function unregistered).
             with self.assertRaises(Exception) as ctx:
                 chs.query(sql)
-            self.assertIn("Code: 48", str(ctx.exception))
+            self.assertIn("Code: 46", str(ctx.exception))
             return
         topN = chs.query(sql)
         print(

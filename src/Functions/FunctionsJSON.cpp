@@ -1280,6 +1280,15 @@ public:
     }
 };
 
+#if defined(CHDB_LITE) && CHDB_LITE
+/// chdb-core-lite: drop niche JSON variants. Keep core extract/has/length/type;
+/// drop CaseInsensitive variants + KeysAndValues/ArrayRaw/Keys/KeysAndValuesRaw.
+/// Variadic so commas inside template arguments don't break macro parsing.
+#define CHDB_LITE_JSON(...) (void)0
+#else
+#define CHDB_LITE_JSON(...) __VA_ARGS__
+#endif
+
 REGISTER_FUNCTION(JSON)
 {
     /// JSONHas
@@ -1657,7 +1666,7 @@ SELECT JSONExtractKeysAndValues('{"x": {"a": 5, "b": 7, "c": 11}}', 'Int8', 'x')
         FunctionDocumentation::IntroducedIn introduced_in = {20, 1};
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValues, JSONExtractKeysAndValuesImpl>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValues, JSONExtractKeysAndValuesImpl>>(documentation));
     }
 
     /// JSONExtractRaw
@@ -1717,7 +1726,7 @@ SELECT JSONExtractArrayRaw('{"a": "hello", "b": [-100, 200.0, "hello"]}', 'b') A
         FunctionDocumentation::IntroducedIn introduced_in = {20, 1};
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRaw, JSONExtractArrayRawImpl>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRaw, JSONExtractArrayRawImpl>>(documentation));
     }
 
     /// JSONExtractKeysAndValuesRaw
@@ -1746,7 +1755,7 @@ SELECT JSONExtractKeysAndValuesRaw('{"a": [-100, 200.0], "b": "hello"}') AS res;
         FunctionDocumentation::IntroducedIn introduced_in = {20, 4};
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesRaw, JSONExtractKeysAndValuesRawImpl>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesRaw, JSONExtractKeysAndValuesRawImpl>>(documentation));
     }
 
     /// JSONExtractKeys
@@ -1776,10 +1785,11 @@ SELECT JSONExtractKeys('{"a": "hello", "b": [-100, 200.0, 300]}') AS res;
         FunctionDocumentation::IntroducedIn introduced_in = {21, 11};
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeys, JSONExtractKeysImpl>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeys, JSONExtractKeysImpl>>(documentation));
     }
 }
 
+#if !defined(CHDB_LITE) || !CHDB_LITE
 REGISTER_FUNCTION(JSONExtractCaseInsensitive)
 {
     /// JSONExtractIntCaseInsensitive
@@ -1801,7 +1811,7 @@ Parses JSON and extracts a value of Int type using case-insensitive key matching
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractIntCaseInsensitive, JSONExtractInt64Impl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractIntCaseInsensitive, JSONExtractInt64Impl, true>>(documentation));
     }
 
     /// JSONExtractUIntCaseInsensitive
@@ -1825,7 +1835,7 @@ Parses JSON and extracts a value of UInt type using case-insensitive key matchin
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractUIntCaseInsensitive, JSONExtractUInt64Impl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractUIntCaseInsensitive, JSONExtractUInt64Impl, true>>(documentation));
     }
 
     /// JSONExtractFloatCaseInsensitive
@@ -1849,7 +1859,7 @@ Parses JSON and extracts a value of Float type using case-insensitive key matchi
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractFloatCaseInsensitive, JSONExtractFloat64Impl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractFloatCaseInsensitive, JSONExtractFloat64Impl, true>>(documentation));
     }
 
     /// JSONExtractBoolCaseInsensitive
@@ -1873,7 +1883,7 @@ Parses JSON and extracts a boolean value using case-insensitive key matching. Th
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractBoolCaseInsensitive, JSONExtractBoolImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractBoolCaseInsensitive, JSONExtractBoolImpl, true>>(documentation));
     }
 
     /// JSONExtractStringCaseInsensitive
@@ -1898,7 +1908,7 @@ Parses JSON and extracts a string using case-insensitive key matching. This func
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractStringCaseInsensitive, JSONExtractStringImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractStringCaseInsensitive, JSONExtractStringImpl, true>>(documentation));
     }
 
     /// JSONExtractCaseInsensitive
@@ -1921,7 +1931,7 @@ Parses JSON and extracts a value of the given ClickHouse data type using case-in
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractCaseInsensitive, JSONExtractImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractCaseInsensitive, JSONExtractImpl, true>>(documentation));
     }
 
     /// JSONExtractKeysAndValuesCaseInsensitive
@@ -1943,7 +1953,7 @@ Parses key-value pairs from JSON using case-insensitive key matching. This funct
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesCaseInsensitive, JSONExtractKeysAndValuesImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesCaseInsensitive, JSONExtractKeysAndValuesImpl, true>>(documentation));
     }
 
     /// JSONExtractRawCaseInsensitive
@@ -1967,7 +1977,7 @@ Returns part of the JSON as an unparsed string using case-insensitive key matchi
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractRawCaseInsensitive, JSONExtractRawImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractRawCaseInsensitive, JSONExtractRawImpl, true>>(documentation));
     }
 
     /// JSONExtractArrayRawCaseInsensitive
@@ -1991,7 +2001,7 @@ Returns an array with elements of JSON array, each represented as unparsed strin
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRawCaseInsensitive, JSONExtractArrayRawImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRawCaseInsensitive, JSONExtractArrayRawImpl, true>>(documentation));
     }
 
     /// JSONExtractKeysAndValuesRawCaseInsensitive
@@ -2015,7 +2025,7 @@ Extracts raw key-value pairs from JSON using case-insensitive key matching. This
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesRawCaseInsensitive, JSONExtractKeysAndValuesRawImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysAndValuesRawCaseInsensitive, JSONExtractKeysAndValuesRawImpl, true>>(documentation));
     }
 
     /// JSONExtractKeysCaseInsensitive
@@ -2040,8 +2050,9 @@ Parses a JSON string and extracts the keys using case-insensitive key matching t
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
 
-        factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysCaseInsensitive, JSONExtractKeysImpl, true>>(documentation);
+        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractKeysCaseInsensitive, JSONExtractKeysImpl, true>>(documentation));
     }
 }
+#endif
 
 }
