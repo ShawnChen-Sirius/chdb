@@ -133,6 +133,19 @@ public:
     std::string getRemoteTableName() const { return remote_table; }
     ClusterPtr getCluster() const;
 
+    /// True when this storage was created by the remote()/remoteSecure() table function.
+    bool isRemoteFunction() const { return is_remote_function; }
+    /// Non-null when the source was remoteSecure(host, view(...)) / merge(...) etc., i.e. wraps
+    /// another table function rather than a plain (db, table) reference.
+    const ASTPtr & getRemoteTableFunctionPtr() const { return remote_table_function_ptr; }
+
+    /// Internal helper exposed for unit testing.
+    /// Returns true iff `lhs` and `rhs` have identical shard topology AND, replica-by-replica,
+    /// identical host_name, port, user, password, default_database, and secure flag.
+    /// Used by per-shard pushdown to detect equivalent sibling remote()/remoteSecure() calls.
+    /// Comparison is performed in-memory; no field is logged.
+    static bool clustersHaveIdenticalShardAddresses(const Cluster & lhs, const Cluster & rhs);
+
     /// Used by InterpreterSystemQuery
     void flushClusterNodesAllData(ContextPtr context, const SettingsChanges & settings_changes);
 

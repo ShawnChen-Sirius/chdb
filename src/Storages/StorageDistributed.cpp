@@ -858,6 +858,131 @@ bool rewriteJoinToGlobalJoinIfNeeded(QueryTreeNodePtr join_tree)
     return rewrite;
 }
 
+} // namespace (anonymous)
+
+bool StorageDistributed::clustersHaveIdenticalShardAddresses(const Cluster & lhs, const Cluster & rhs)
+{
+    const auto & ls = lhs.getShardsAddresses();
+    const auto & rs = rhs.getShardsAddresses();
+    if (ls.size() != rs.size())
+        return false;
+
+    for (size_t s = 0; s < ls.size(); ++s)
+    {
+        if (ls[s].size() != rs[s].size())
+            return false;
+        for (size_t r = 0; r < ls[s].size(); ++r)
+        {
+            const auto & la = ls[s][r];
+            const auto & ra = rs[s][r];
+            if (la.host_name != ra.host_name)               return false;
+            if (la.port != ra.port)                         return false;
+            if (la.user != ra.user)                         return false;
+            if (la.password != ra.password)                 return false;
+            if (la.default_database != ra.default_database) return false;
+            if (la.secure != ra.secure)                     return false;
+        }
+    }
+    return true;
+}
+
+namespace
+{
+
+/** Returns true if two StorageDistributed instances both come from a plain
+  * remote()/remoteSecure(host, db, table, user, password) table function call
+  * referring to the same cluster (host, port, user, password, secure flag,
+  * default database) shard-by-shard and replica-by-replica.
+  *
+  * Used to detect sibling remoteSecure() calls inside a query tree that the
+  * pushdown source can rewrite into local-table references on the remote
+  * server, avoiding a second round of DNS resolution on the remote side.
+  */
+static bool areEquivalentRemoteFunctionStorages(
+    const StorageDistributed & lhs,
+    const StorageDistributed & rhs)
+{
+    if (!lhs.isRemoteFunction() || !rhs.isRemoteFunction())
+        return false;
+    if (lhs.getRemoteTableFunctionPtr() || rhs.getRemoteTableFunctionPtr())
+        return false;
+
+    const auto lc = lhs.getCluster();
+    const auto rc = rhs.getCluster();
+    if (!lc || !rc)
+        return false;
+
+    return StorageDistributed::clustersHaveIdenticalShardAddresses(*lc, *rc);
+}
+
+/** Visits a per-shard query tree and collects every sibling TableFunctionNode whose
+  * backing storage is a StorageDistributed equivalent to the current pushdown source.
+  * For each such node it builds a replacement TableNode wrapping a StorageDummy with
+  * the nested storage's (remote_database, remote_table) StorageID and column list,
+  * preserving alias and table expression modifiers (FINAL, sample, etc).
+  *
+  * The replacement map is applied by the caller via a single
+  * IQueryTreeNode::cloneAndReplace(map) so that nested references inside subqueries
+  * (e.g. WHERE ... IN (SELECT ... FROM remoteSecure(...))) are rewritten correctly.
+  */
+class RewriteEquivalentRemoteFunctionsForShardVisitor
+    : public InDepthQueryTreeVisitor<RewriteEquivalentRemoteFunctionsForShardVisitor>
+{
+public:
+    RewriteEquivalentRemoteFunctionsForShardVisitor(
+        const StorageDistributed & current_,
+        ContextPtr query_context_,
+        IQueryTreeNode::ReplacementMap & replacement_map_)
+        : current(current_)
+        , query_context(std::move(query_context_))
+        , replacement_map(replacement_map_)
+    {}
+
+    void visitImpl(QueryTreeNodePtr & node)
+    {
+        auto * tfn = node->as<TableFunctionNode>();
+        if (!tfn)
+            return;
+
+        const StoragePtr & storage = tfn->getStorage();
+        if (!storage)
+            return;
+
+        const auto * nested_dist = typeid_cast<const StorageDistributed *>(storage.get());
+        if (!nested_dist)
+            return;
+
+        if (!areEquivalentRemoteFunctionStorages(current, *nested_dist))
+            return;
+
+        /// The nested StorageDistributed already fetched its remote structure on
+        /// the chDB side (single remoteSecure() resolves fine on the MLP-side host).
+        /// Reuse that snapshot rather than calling getStructureOfRemoteTable again.
+        auto snapshot = tfn->getStorageSnapshot();
+        if (!snapshot)
+            return;
+
+        auto get_opts = GetColumnsOptions(GetColumnsOptions::All).withVirtuals();
+        auto column_names_and_types = snapshot->getColumns(get_opts);
+
+        auto dummy_storage = std::make_shared<StorageDummy>(
+            StorageID{nested_dist->getRemoteDatabaseName(), nested_dist->getRemoteTableName()},
+            ColumnsDescription{column_names_and_types});
+
+        auto new_table_node = std::make_shared<TableNode>(std::move(dummy_storage), query_context);
+        new_table_node->setAlias(tfn->getAlias());
+        if (auto modifiers = tfn->getTableExpressionModifiers())
+            new_table_node->setTableExpressionModifiers(*modifiers);
+
+        replacement_map.emplace(node.get(), std::move(new_table_node));
+    }
+
+private:
+    const StorageDistributed & current;
+    ContextPtr query_context;
+    IQueryTreeNode::ReplacementMap & replacement_map;
+};
+
 QueryTreeNodePtr buildQueryTreeDistributed(SelectQueryInfo & query_info,
     const StorageSnapshotPtr & distributed_storage_snapshot,
     const StorageID & remote_storage_id,
@@ -931,6 +1056,28 @@ QueryTreeNodePtr buildQueryTreeDistributed(SelectQueryInfo & query_info,
     auto query_tree_to_modify = query_info.query_tree->cloneAndReplace(query_info.table_expression, std::move(replacement_table_expression));
     ReplaseAliasColumnsVisitor replace_alias_columns_visitor;
     replace_alias_columns_visitor.visit(query_tree_to_modify);
+
+    /// When the current pushdown source is itself a plain remote()/remoteSecure() (i.e. chDB's
+    /// embedded usage rather than an XML-defined cluster), rewrite every sibling
+    /// remote()/remoteSecure() referring to the same cluster into a local-table StorageDummy.
+    /// This prevents the remote ClickHouse server from re-resolving customer VPC PrivateLink
+    /// hostnames during nested DESC TABLE / structure fetch when only one-way DNS visibility
+    /// exists between the chDB host and the remote server.
+    if (distributed_storage_snapshot)
+    {
+        const auto * current_dist = typeid_cast<const StorageDistributed *>(&distributed_storage_snapshot->storage);
+        if (current_dist
+            && current_dist->isRemoteFunction()
+            && !current_dist->getRemoteTableFunctionPtr())
+        {
+            IQueryTreeNode::ReplacementMap remote_function_replacements;
+            RewriteEquivalentRemoteFunctionsForShardVisitor visitor(*current_dist, query_context, remote_function_replacements);
+            visitor.visit(query_tree_to_modify);
+
+            if (!remote_function_replacements.empty())
+                query_tree_to_modify = query_tree_to_modify->cloneAndReplace(remote_function_replacements);
+        }
+    }
 
     const auto & settings = query_context->getSettingsRef();
 

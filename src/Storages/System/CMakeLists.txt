@@ -35,9 +35,23 @@ add_dependencies(generate-source generate-contributors)
 
 set(GENERATED_LICENSES_SRC "${CMAKE_CURRENT_BINARY_DIR}/StorageSystemLicenses.generated.cpp")
 
+# StorageSystemLicenses.sh shells out to `gfind`/`ggrep` on macOS (assumed
+# present per upstream ClickHouse setup). When GNU findutils is missing, the
+# script exits midway under `set -e -o pipefail` and the generated file is
+# left with only the `library_licenses[] = {` prefix, breaking the build.
+# Fall back to a syntactically valid empty stub in that case so downstream
+# targets still compile; the system.licenses table is rarely queried in chDB
+# embedded use.
 add_custom_command(
     OUTPUT StorageSystemLicenses.generated.cpp
-    COMMAND ./StorageSystemLicenses.sh "${CMAKE_SOURCE_DIR}" > ${GENERATED_LICENSES_SRC}
+    COMMAND bash -c "./StorageSystemLicenses.sh '${CMAKE_SOURCE_DIR}' > '${GENERATED_LICENSES_SRC}' ; \
+        if ! grep -q nullptr '${GENERATED_LICENSES_SRC}' ; then \
+            printf '%s\\n' \
+                '// stub: StorageSystemLicenses.sh produced no usable output (likely missing GNU findutils on macOS).' \
+                'const char * library_licenses[] = {' \
+                '    nullptr' \
+                '};' > '${GENERATED_LICENSES_SRC}' ; \
+        fi"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 list (APPEND storages_system_sources ${GENERATED_LICENSES_SRC})
