@@ -23,6 +23,8 @@ Reported as chdb-core issue #53 (windowFunnel against file('*.parquet') fails wi
 LOGICAL_ERROR "Too many bytes in mask").
 """
 
+import csv
+import io
 import os
 import tempfile
 import unittest
@@ -95,11 +97,23 @@ class TestParquetNullableFilter(unittest.TestCase):
             "CSV",
         )
         self.assertFalse(result.has_error(), result.error_message())
-        lines = result.bytes().decode().strip().splitlines()
-        self.assertEqual(len(lines), 3)
-        for line in lines:
-            # val should be the empty string, not \N
-            self.assertTrue(line.endswith(","), f"expected empty val, got: {line}")
+        # ClickHouse CSV quotes empty strings, so the val field renders as
+        # `""` (not bare `,`). Parse the result with csv.reader and inspect
+        # the second field directly instead of doing a fragile string-suffix
+        # check on the raw line.
+        rows = list(csv.reader(io.StringIO(result.bytes().decode())))
+        self.assertEqual(len(rows), 3)
+        expected_ids = ["0", "3", "6"]
+        for row, expected_id in zip(rows, expected_ids):
+            self.assertEqual(
+                len(row), 2, f"expected 2 fields, got: {row!r}"
+            )
+            self.assertEqual(row[0], expected_id, f"unexpected id in row: {row!r}")
+            self.assertEqual(
+                row[1],
+                "",
+                f"expected empty val (NULL→default), got: {row[1]!r} (row={row!r})",
+            )
 
     # ------------------------------------------------------------------
     # 3. Non-nullable + null_as_default=0 + filter hits ONLY NULL rows →
