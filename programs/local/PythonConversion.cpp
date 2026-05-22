@@ -114,7 +114,7 @@ static void writeInteger(const py::handle & obj, rapidjson::Value & json_value)
 			uint64_t unsigned_value = PyLong_AsUnsignedLongLong(ptr);
 			if (!PyErr_Occurred())
 			{
-				json_value.SetUint64(value);
+				json_value.SetUint64(unsigned_value);
 				return;
 			}
 
