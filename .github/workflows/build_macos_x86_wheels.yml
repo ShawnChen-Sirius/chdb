@@ -494,7 +494,13 @@ jobs:
       - name: Upload wheels to release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          gh release upload ${{ github.ref_name }} dist/*.whl --clobber
+          gh release upload ${{ github.ref_name }} dist/chdb_core-*.whl --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Upload chdb-core-lite wheel to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release upload ${{ github.ref_name }} dist/chdb_core_lite-*.whl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - name: Packege libchdb.so
@@ -534,7 +540,17 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.9
-          python -m twine upload dist/*.whl
+          python -m twine upload dist/chdb_core-*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      - name: Upload chdb-core-lite to pypi
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          python -m twine upload dist/chdb_core_lite-*.whl
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
