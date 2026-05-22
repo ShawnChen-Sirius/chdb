@@ -59,8 +59,8 @@ git clone --depth 1 --branch "${CHDB_TAG}" https://github.com/chdb-io/chdb.git "
 echo "Installing chdb wrapper on top of chdb-core (no deps to preserve local chdb-core)..."
 ${PYTHON} -m pip install --no-deps --force-reinstall "${CHDB_SRC}"
 
-echo "Installing test dependencies (pytest, pytest-timeout)..."
-${PYTHON} -m pip install --upgrade pytest pytest-timeout
+echo "Installing test dependencies (pytest, pytest-timeout, hypothesis)..."
+${PYTHON} -m pip install --upgrade pytest pytest-timeout hypothesis
 
 cd "${CHDB_SRC}"
 
