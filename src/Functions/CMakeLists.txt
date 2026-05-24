@@ -136,6 +136,14 @@ if (CHDB_LITE)
         # Dictionary lookup functions: useful only with dictionaries (already trimmed); fail clearly when called.
         FunctionsExternalDictionaries.cpp
         FunctionDictGetKeys.cpp
+        # AI SQL functions (aiClassify / aiExtract / aiGenerate / aiTranslate):
+        # make outbound HTTP calls to OpenAI / Anthropic; orthogonal to the embedded SQL engine.
+        # AI/ subdirectory (providers + quota tracker) is gated separately below.
+        aiClassify.cpp
+        aiExtract.cpp
+        aiGenerate.cpp
+        aiTranslate.cpp
+        FunctionBaseAI.cpp
     )
     foreach (f IN LISTS _chdb_drop_funcs)
         list(REMOVE_ITEM clickhouse_functions_sources ${f})
@@ -186,7 +194,11 @@ if (CHDB_MINIMAL_FUNCTIONS)
         "${CMAKE_CURRENT_SOURCE_DIR}/multiply.cpp"
     )
 endif()
-add_headers_and_sources(clickhouse_functions AI)
+if (NOT CHDB_LITE)
+    # CHDB_LITE drops the AI SQL functions (aiClassify/aiExtract/aiGenerate/aiTranslate);
+    # their provider/quota helpers in AI/ are only referenced from those .cpp files, so skip the subdir too.
+    add_headers_and_sources(clickhouse_functions AI)
+endif()
 
 # These files are moved from clickhouse_functions into dbms to make dbms self-contained (not depend on clickhouse_functions)
 # This allows less dependency and linker work (specially important when building many example executables)
@@ -320,6 +332,10 @@ if (TARGET ch_contrib::h3)
     list (APPEND PRIVATE_LIBS ch_contrib::h3)
 endif()
 
+if (TARGET ch_contrib::utf8proc)
+    list (APPEND PRIVATE_LIBS ch_contrib::utf8proc)
+endif()
+
 if (TARGET ch_contrib::vectorscan)
     list (APPEND PRIVATE_LIBS ch_contrib::vectorscan)
 endif()
@@ -395,7 +411,16 @@ set(dbms_headers "${dbms_headers}" PARENT_SCOPE)
 
 target_link_libraries(clickhouse_functions_obj PUBLIC ${PUBLIC_LIBS} PRIVATE ${PRIVATE_LIBS})
 
-# Used to forward the linking information to the final binaries such as clickhouse / unit_tests_dbms,
-# since such information are lost after we convert to OBJECT target
-add_library(clickhouse_functions INTERFACE)
-target_link_libraries(clickhouse_functions INTERFACE ${OBJECT_LIBS} ${PUBLIC_LIBS} ${PRIVATE_LIBS})
+if (USE_STATIC_LIBRARIES OR NOT SPLIT_SHARED_LIBRARIES)
+    # Used to forward the linking information to the final binaries such as clickhouse / unit_tests_dbms,
+    # since such information are lost after we convert to OBJECT target
+    add_library(clickhouse_functions INTERFACE)
+    target_link_libraries(clickhouse_functions INTERFACE ${OBJECT_LIBS} ${PUBLIC_LIBS} ${PRIVATE_LIBS})
+else()
+    add_library(clickhouse_functions SHARED ${OBJECT_LIBS})
+    target_link_libraries(clickhouse_functions PUBLIC ${PUBLIC_LIBS} PRIVATE ${PRIVATE_LIBS})
+endif ()
+
+if (CHDB_VERSION)
+    add_compile_definitions(CHDB_VERSION_STRING="${CHDB_VERSION}")
+endif ()
