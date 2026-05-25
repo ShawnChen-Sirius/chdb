@@ -38,7 +38,9 @@ echo "chdb-core engine version: ${CORE_VERSION}"
 
 if [ -z "${CHDB_TAG:-}" ]; then
     echo "Resolving latest chdb release tag from GitHub..."
-    CHDB_TAG=$(curl -fsSL https://api.github.com/repos/chdb-io/chdb/releases/latest \
+    CHDB_TAG=$(curl -fsSL \
+        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+        https://api.github.com/repos/chdb-io/chdb/releases/latest \
         | ${PYTHON} -c "import json, sys; print(json.load(sys.stdin)['tag_name'])")
 fi
 echo "Using chdb tag: ${CHDB_TAG}"
@@ -57,8 +59,8 @@ git clone --depth 1 --branch "${CHDB_TAG}" https://github.com/chdb-io/chdb.git "
 echo "Installing chdb wrapper on top of chdb-core (no deps to preserve local chdb-core)..."
 ${PYTHON} -m pip install --no-deps --force-reinstall "${CHDB_SRC}"
 
-echo "Installing test dependencies (pytest, pytest-timeout)..."
-${PYTHON} -m pip install --upgrade pytest pytest-timeout
+echo "Installing test dependencies (pytest, pytest-timeout, hypothesis)..."
+${PYTHON} -m pip install --upgrade pytest pytest-timeout hypothesis
 
 cd "${CHDB_SRC}"
 

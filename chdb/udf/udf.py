@@ -10,6 +10,74 @@ from xml.etree import ElementTree as ET
 import chdb
 
 
+def func(arg_types=None, return_type=None, *, on_null=None, on_error=None):
+    """Decorator to register a Python function as a chDB SQL function.
+
+    Uses the native Python UDF mechanism (create_function) for direct
+    in-process invocation without subprocess overhead.
+
+    Args:
+        arg_types: List of argument types. Optional. Each element accepts:
+            - A ChdbType instance: e.g. ``INT64``
+            - A type string: e.g. ``"Int64"``
+            - A Python type: e.g. ``int``, ``float``, ``str``
+            - ``None`` (default): inferred from parameter type annotations.
+            If provided, must specify types for ALL parameters.
+        return_type: ClickHouse return type. Optional. Accepts:
+            - A ChdbType instance: e.g. ``INT64``, ``STRING``, ``FLOAT64``
+            - A type string: e.g. ``"Int64"``, ``"String"``, ``"DateTime64(3)"``
+            - ``None`` (default): inferred from the function's return type annotation.
+        on_null (str): How to handle NULL inputs. Keyword-only. Accepts:
+            - ``"skip"`` (default): return NULL without calling the function.
+            - ``"pass"``: convert NULL to ``None`` and call the function.
+        on_error (str): How to handle exceptions. Keyword-only. Accepts:
+            - ``"propagate"`` (default): raise the error.
+            - ``"ignore"``: return NULL for that row.
+
+    Returns:
+        The original function, unchanged. It remains callable as normal Python
+        and is simultaneously available in SQL queries by its ``__name__``.
+
+    Examples:
+        .. code-block:: python
+
+            from chdb import func
+            from chdb.sqltypes import INT64, STRING
+
+            @func([INT64, INT64], INT64)
+            def add(a, b):
+                return a + b
+
+            @func(return_type="String")
+            def greet(name):
+                return f"Hello, {name}!"
+
+            # Inferred from annotation:
+            @func()
+            def multiply(a: int, b: int) -> int:
+                return a * b
+
+            # Pass NULL as None to the function:
+            @func(return_type=INT64, on_null="pass")
+            def null_safe(x):
+                return 0 if x is None else x + 1
+
+    To remove a registered function, use ``chdb.drop_function(name)``.
+    """
+
+    def decorator(fn):
+        chdb.create_function(fn.__name__, fn, arg_types, return_type,
+                             on_null=on_null, on_error=on_error)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def generate_udf(func_name, args, return_type, udf_body):
     """Generate UDF configuration and executable script files.
 

@@ -262,6 +262,7 @@ libchdb.so
 *.tgz
 /examples/ml-25m
 .clickhouse/
+test.py
 
 .chdb-build-bin/
 

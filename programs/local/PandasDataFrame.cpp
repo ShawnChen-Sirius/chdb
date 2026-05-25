@@ -222,8 +222,28 @@ void PandasDataFrame::fillColumn(
         }
     }
 
-    py::object underlying_array = series.attr("array");
     column.row_count = py::len(series);
+
+    /// Fast path for pandas 2.x object-dtype string columns:
+    /// series.values returns the underlying ndarray directly (zero-copy).
+    /// For pandas 3.x StringDtype columns, dtype is "string" or "str" (not "object"),
+    /// so they will skip this fast path and go through to_numpy() below.
+    if (column.row_count > 0 && numpy_type.type == NumpyNullableType::OBJECT)
+    {
+        auto elem_type = series.attr("iloc").attr("__getitem__")(0).attr("__class__").attr("__name__").cast<std::string>();
+
+        if (elem_type == "str" || elem_type == "unicode")
+        {
+            py::array values_array = series.attr("values");
+            column.data = values_array;
+            column.buf = const_cast<void *>(values_array.data());
+            chassert(py::hasattr(values_array, "strides"));
+            column.stride = values_array.attr("strides").attr("__getitem__")(0).cast<size_t>();
+            return;
+        }
+    }
+
+    py::object underlying_array = series.attr("array");
 
     if (py::hasattr(underlying_array, "_mask"))
     {

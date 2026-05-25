@@ -192,7 +192,7 @@ if __name__ == "__main__":
                 continue
 
             for file in files:
-                if file.endswith(".py"):
+                if file.endswith(".py") or file.endswith(".pyi") or file == "py.typed":
                     pkg_files.append(os.path.join(root, file))
                 # Include pybind11 nonlimitedapi libraries for all Python versions
                 elif file.startswith("libpybind11nonlimitedapi_chdb_") and (
