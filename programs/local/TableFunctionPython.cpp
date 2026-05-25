@@ -7,6 +7,7 @@
 #include "PythonTableCache.h"
 #include "PythonUtils.h"
 
+#include <Core/Settings.h>
 #include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <Interpreters/Context.h>
@@ -34,6 +35,11 @@ using namespace CHDB;
 namespace DB
 {
 
+namespace Setting
+{
+extern const SettingsBool allow_python_table_function;
+}
+
 namespace ErrorCodes
 {
 extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
@@ -41,10 +47,15 @@ extern const int PY_OBJECT_NOT_FOUND;
 extern const int PY_EXCEPTION_OCCURED;
 extern const int BAD_ARGUMENTS;
 extern const int UNKNOWN_FORMAT;
+extern const int FUNCTION_NOT_ALLOWED;
 }
 
 void TableFunctionPython::parseArguments(const ASTPtr & ast_function, ContextPtr context)
 {
+    if (!context->getSettingsRef()[Setting::allow_python_table_function])
+        throw Exception(
+            ErrorCodes::FUNCTION_NOT_ALLOWED, "Python table function is disabled, because setting 'allow_python_table_function' is set to 0");
+
     const auto & func_args = ast_function->as<ASTFunction &>();
 
     if (!func_args.arguments)
