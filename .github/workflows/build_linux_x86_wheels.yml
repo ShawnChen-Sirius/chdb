@@ -476,6 +476,11 @@ jobs:
             echo "Testing chdb-core-lite on Python $version"
             echo "=============================================="
             pyenv shell $version
+            # Clean any chdb-core left over from earlier steps before installing lite —
+            # both packages ship the same chdb/ module path; pip metadata would otherwise
+            # list both, and uninstalling lite later could leave a half-cleaned tree.
+            python -m pip uninstall -y chdb-core || true
+            python -m pip uninstall -y chdb-core-lite || true
             python -m pip install dist/chdb_core_lite-*manylinux*.whl --force-reinstall
             python -c "import chdb; res = chdb.query('select 1112222222,555', 'CSV'); print(f'Python $version: {res}')"
             # Full test suite + lite-only tests (CHDB_LITE=1 unlocks tests/test_chdb_core_lite.py)
@@ -496,6 +501,8 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.11
+          python -m pip uninstall -y chdb-core || true
+          python -m pip uninstall -y chdb-core-lite || true
           python -m pip install dist/chdb_core_lite-*manylinux*.whl --force-reinstall
           CHDB_LITE=1 PYTHON=$(pyenv which python) bash ./chdb/test_chdb_datastore.sh
           python -m pip uninstall -y chdb-core-lite
