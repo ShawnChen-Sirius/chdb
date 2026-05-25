@@ -230,30 +230,15 @@ void PandasDataFrame::fillColumn(
     /// so they will skip this fast path and go through to_numpy() below.
     if (column.row_count > 0 && numpy_type.type == NumpyNullableType::OBJECT)
     {
-        py::array values_array = series.attr("values");
         auto elem_type = series.attr("iloc").attr("__getitem__")(0).attr("__class__").attr("__name__").cast<std::string>();
 
         if (elem_type == "str" || elem_type == "unicode")
         {
-            /// Object dtype with string elements: zero-copy via series.values
+            py::array values_array = series.attr("values");
             column.data = values_array;
             column.buf = const_cast<void *>(values_array.data());
             chassert(py::hasattr(values_array, "strides"));
             column.stride = values_array.attr("strides").attr("__getitem__")(0).cast<size_t>();
-            return;
-        }
-
-        if (elem_type == "bytes" || elem_type == "object")
-        {
-            /// bytes or other object: convert to str dtype first
-            auto str_obj = series.attr("astype")(py::dtype("str"));
-            py::array str_array = str_obj.attr("values");
-            column.data = str_array;
-            column.tmp = str_array;
-            column.tmp.inc_ref();
-            column.buf = const_cast<void *>(str_array.data());
-            chassert(py::hasattr(str_array, "strides"));
-            column.stride = str_array.attr("strides").attr("__getitem__")(0).cast<size_t>();
             return;
         }
     }
