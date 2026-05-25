@@ -468,6 +468,20 @@ jobs:
           done
           pyenv shell --unset
         continue-on-error: false
+      - name: Test chdb-core-lite DataStore tests against upstream chdb (latest tag)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 60
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.11
+          python -m pip install dist/chdb_core_lite-*macosx*.whl --force-reinstall
+          CHDB_LITE=1 PYTHON=$(pyenv which python) bash ./chdb/test_chdb_datastore.sh
+          python -m pip uninstall -y chdb-core-lite
+          pyenv shell --unset
+        continue-on-error: false
       - name: Restore pyproject.toml (chdb-core-lite build mutates it in place)
         if: always()
         run: git checkout -- pyproject.toml

@@ -64,6 +64,22 @@ class TestChDBCoreLite(unittest.TestCase):
             with self.subTest(sql=sql):
                 self._assert_not_found(sql)
 
+    def test_trimmed_big_int_conversions_throw_cleanly(self):
+        # toInt128/256, toUInt128/256, toDecimal128/256, toBFloat16 are removed
+        # in lite; the corresponding UDF tests in test_func_udf_types.py are
+        # skipped via @unittest.skipIf(_LITE).
+        for sql in [
+            "SELECT toInt128('1')",
+            "SELECT toInt256('1')",
+            "SELECT toUInt128('1')",
+            "SELECT toUInt256('1')",
+            "SELECT toDecimal128('1.5', 2)",
+            "SELECT toDecimal256('1.5', 2)",
+            "SELECT toBFloat16(1.0)",
+        ]:
+            with self.subTest(sql=sql):
+                self._assert_not_found(sql)
+
 
 if __name__ == "__main__":
     unittest.main()

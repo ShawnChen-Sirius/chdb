@@ -1,5 +1,6 @@
 #!python3
 
+import os
 import unittest
 import datetime
 import chdb
@@ -10,6 +11,14 @@ from chdb.sqltypes import (
     FLOAT32, FLOAT64, STRING, DATE, DATE32, DATETIME, DATETIME64,
 )
 from chdb.session import Session
+
+# chdb-core-lite drops Int128/256 + UInt128/256 conversion (toInt128, toUInt256, ...)
+# and the matching arithmetic/comparison template instantiations. The UDF tests
+# below register big-int UDFs and exercise them via these conversion functions,
+# so they cannot run on the lite wheel; skip at class level. tests/test_chdb_core_lite.py
+# asserts the trim itself (toInt128/... raise Code 46).
+_LITE = os.environ.get("CHDB_LITE") == "1"
+_LITE_BIG_INT_REASON = "chdb-core-lite drops Int128/256, UInt128/256 conversions"
 
 
 class TestBoolUDF(unittest.TestCase):
@@ -975,6 +984,7 @@ class TestInt64UDF(unittest.TestCase):
         chdb.drop_function("i64_py_callable")
 
 
+@unittest.skipIf(_LITE, _LITE_BIG_INT_REASON)
 class TestInt128UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -1168,6 +1178,7 @@ class TestInt128UDF(unittest.TestCase):
         chdb.drop_function("i128_big_neg")
 
 
+@unittest.skipIf(_LITE, _LITE_BIG_INT_REASON)
 class TestInt256UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2044,6 +2055,7 @@ class TestUInt64UDF(unittest.TestCase):
         chdb.drop_function("u64_py_callable")
 
 
+@unittest.skipIf(_LITE, _LITE_BIG_INT_REASON)
 class TestUInt128UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
@@ -2229,6 +2241,7 @@ class TestUInt128UDF(unittest.TestCase):
         chdb.drop_function("u128_big_id")
 
 
+@unittest.skipIf(_LITE, _LITE_BIG_INT_REASON)
 class TestUInt256UDF(unittest.TestCase):
     def setUp(self):
         self.session = Session()
