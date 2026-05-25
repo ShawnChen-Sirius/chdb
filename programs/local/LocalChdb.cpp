@@ -1,10 +1,13 @@
 #include "LocalChdb.h"
 #include "chdb-internal.h"
 #include "PandasDataFrameBuilder.h"
-#include "ChunkCollectorOutputFormat.h"
 #include "PythonImporter.h"
+#include "ChdbPyType.h"
+#include "ChdbGlobalFunctions.h"
+#include "PythonUDFRegistry.h"
 #include "StoragePython.h"
-#include <ChdbClient.h>
+#include "ChdbClient.h"
+#include "PyDateTimeHelper.h"
 #include "chdb.h"
 
 #include <pybind11/detail/non_limited_api.h>
@@ -12,7 +15,8 @@
 #include <IO/Progress.h>
 #include <Poco/String.h>
 #include <Common/logger_useful.h>
-#include <vector>
+#include <sstream>
+#include <stdexcept>
 #if USE_JEMALLOC
 #    include <Common/memory.h>
 #endif
@@ -24,10 +28,6 @@
 #if USE_CLIENT_AI
 #    include "AIQueryProcessor.h"
 #endif
-
-#include <iostream>
-#include <sstream>
-#include <stdexcept>
 
 namespace py = pybind11;
 
@@ -870,6 +870,11 @@ PYBIND11_MODULE(_chdb, m)
             py::arg("streaming_result"),
             "Cancel a streaming query");
 
+    CHDB::ChdbPyType::initialize(m);
+    CHDB::PythonUDFRegistry::instance();
+    CHDB::PyDateTimeHelper::initialize();
+    CHDB::registerGlobalFunctions(m);
+
     m.def(
         "query",
         &query,
@@ -895,6 +900,7 @@ PYBIND11_MODULE(_chdb, m)
 
     auto destroy_import_cache = []()
     {
+        CHDB::PythonUDFRegistry::instance().clear();
         CHDB::PythonImporter::destroy();
     };
     m.add_object("_destroy_import_cache", py::capsule(destroy_import_cache));

@@ -9,6 +9,10 @@
 #include <Columns/ColumnString.h>
 #include <Common/logger_useful.h>
 
+#if USE_JEMALLOC
+#include <Common/memory.h>
+#endif
+
 namespace DB
 {
 
@@ -247,6 +251,9 @@ void insertObjToStringColumn(PyObject * obj, ColumnString * string_column)
             type_name = "unknown";
         }
 
+#if USE_JEMALLOC
+        ::Memory::MemoryCheckScope memory_check_scope;
+#endif
         throw Exception(ErrorCodes::BAD_TYPE_OF_FIELD, "Error converting Python object {} to string: {}", type_name, e.what());
     }
 }

@@ -16,7 +16,8 @@ namespace ErrorCodes
 
 }
 
-namespace pybind11 {
+namespace pybind11
+{
 
 bool gil_check()
 {
