@@ -61,9 +61,10 @@ class TestCursor(unittest.TestCase):
 
     def test_complex_types(self):
         # Test more complex ClickHouse types
+        from decimal import Decimal
         self.cursor.execute(
             """
-            SELECT 
+            SELECT
                 toDecimal64(123.45, 2) as decimal_val,
                 toFixedString('test', 10) as fixed_str_val,
                 tuple(1, 'a') as tuple_val,
@@ -71,8 +72,12 @@ class TestCursor(unittest.TestCase):
         """
         )
         row = self.cursor.fetchone()
-        # All complex types should be converted to strings
-        for val in row:
+        # Decimal is converted to decimal.Decimal (lossless, per PEP 249).
+        # Other complex types we don't have a dedicated branch for fall back
+        # to str (Tuple / Map / FixedString).
+        self.assertIsInstance(row[0], Decimal)
+        self.assertEqual(row[0], Decimal("123.45"))
+        for val in row[1:]:
             self.assertIsInstance(val, (str, type(None)))
 
     def test_fetch_methods(self):
