@@ -447,6 +447,18 @@ jobs:
           CHDB_LITE=1 make wheel
           python -m wheel tags --platform-tag=macosx_10_15_x86_64 --remove dist/chdb_core_lite-*.whl
           ls -lh dist/
+      - name: Verify chdb-core-lite wheel size < 50 MiB
+        run: |
+          set -e
+          WHEEL=$(ls dist/chdb_core_lite-*macosx*.whl | head -1)
+          SIZE=$(wc -c < "$WHEEL" | tr -d ' ')
+          MAX=52428800
+          MIB=$(awk "BEGIN{printf \"%.2f\", $SIZE/1048576}")
+          if [ "$SIZE" -ge "$MAX" ]; then
+            echo "ERROR: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), must be < 50 MiB (52,428,800 bytes)"
+            exit 1
+          fi
+          echo "OK: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), under 50 MiB"
       - name: Test chdb-core-lite wheel on Python 3.9 and 3.14
         run: |
           ulimit -c unlimited
