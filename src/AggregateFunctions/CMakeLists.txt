@@ -45,7 +45,6 @@ if (CHDB_LITE)
         AggregateFunctionCategoricalInformationValue.cpp
         AggregateFunctionSimpleLinearRegression.cpp
         AggregateFunctionLargestTriangleThreeBuckets.cpp
-        AggregateFunctionWindowFunnel.cpp
         AggregateFunctionRetention.cpp
         AggregateFunctionSequenceMatch.cpp
         AggregateFunctionSequenceNextNode.cpp
@@ -66,9 +65,6 @@ if (CHDB_LITE)
         TimeSeries/AggregateFunctionTimeseriesHelpers.cpp
         TimeSeries/AggregateFunctionLast2Samples.cpp
         TimeSeries/AggregateFunctionTimeSeriesGroupArray.cpp
-        # Statistical aggregates: covarPop/covarSamp, corr — niche, ~7 MB unstripped
-        AggregateFunctionCovar.cpp
-        AggregateFunctionCorr.cpp
         # uniqCombined precision variants: keep 17 (default), drop 12-16 and 18-20.
         # The switch in AggregateFunctionUniqCombined.cpp is gated by CHDB_LITE
         # to throw at runtime if a non-17 precision is requested.
@@ -80,8 +76,7 @@ if (CHDB_LITE)
         AggregateFunctionUniqCombined18.cpp
         AggregateFunctionUniqCombined19.cpp
         AggregateFunctionUniqCombined20.cpp
-        # Niche: topK/topKWeighted, groupArraySorted, groupBitmap*
-        AggregateFunctionTopK.cpp
+        # Niche: groupArraySorted, groupBitmap*
         AggregateFunctionGroupArraySorted.cpp
         AggregateFunctionGroupBitmap.cpp
         # Bitwise aggregates (groupBitOr/And/Xor) — niche, ~1.1 MB unstripped
@@ -90,11 +85,6 @@ if (CHDB_LITE)
         AggregateFunctionSumMap.cpp
         # groupArrayIntersect — niche, ~1 MB unstripped
         AggregateFunctionGroupArrayIntersect.cpp
-        # Statistical moments: skewness/kurtosis — niche, ~1.7 MB unstripped
-        AggregateFunctionThirdMoment.cpp
-        AggregateFunctionFourthMoment.cpp
-        # groupUniqArray — fairly niche (collects unique values into array), ~1.5 MB unstripped
-        AggregateFunctionGroupUniqArray.cpp
         # Extra niche aggregates: uniqUpTo (caps cardinality), quantilePrometheus,
         # studentTTestOneSample, varianceMatrix, anyHeavy, meanZTest, groupConcat,
         # distinctJSONPathsAndTypes, estimateCompressionRatio — ~3 MB unstripped total.
@@ -140,7 +130,6 @@ if (CHDB_LITE)
         registerAggregateFunctionCategoricalIV
         registerAggregateFunctionSimpleLinearRegression
         registerAggregateFunctionLargestTriangleThreeBuckets
-        registerAggregateFunctionWindowFunnel
         registerAggregateFunctionRetention
         registerAggregateFunctionsSequenceMatch
         registerAggregateFunctionSequenceNextNode
@@ -160,8 +149,6 @@ if (CHDB_LITE)
         registerAggregateFunctionTimeseries
         registerAggregateFunctionLast2Samples
         registerAggregateFunctionTimeseriesGroupArray
-        registerAggregateFunctionsStatisticsCovar
-        registerAggregateFunctionsStatisticsCorr
         # UniqCombined precision drops have no register fns — emit dummy unused stubs
         _chdb_unused_uniqcombined_12_stub
         _chdb_unused_uniqcombined_13_stub
@@ -171,15 +158,11 @@ if (CHDB_LITE)
         _chdb_unused_uniqcombined_18_stub
         _chdb_unused_uniqcombined_19_stub
         _chdb_unused_uniqcombined_20_stub
-        registerAggregateFunctionTopK
         registerAggregateFunctionGroupArraySorted
         registerAggregateFunctionsBitmap
         registerAggregateFunctionsBitwise
         registerAggregateFunctionSumMap
         registerAggregateFunctionGroupArrayIntersect
-        registerAggregateFunctionsStatisticsThirdMoment
-        registerAggregateFunctionsStatisticsFourthMoment
-        registerAggregateFunctionGroupUniqArray
         registerAggregateFunctionUniqUpTo
         registerAggregateFunctionsQuantilePrometheusHistogram
         registerAggregateFunctionStudentTTestOneSample

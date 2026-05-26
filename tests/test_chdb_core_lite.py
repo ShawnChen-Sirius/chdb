@@ -54,12 +54,15 @@ class TestChDBCoreLite(unittest.TestCase):
                 self._assert_not_found(sql)
 
     def test_trimmed_aggregates_throw_cleanly(self):
+        # Keep this list aligned with src/AggregateFunctions/CMakeLists.txt drop list.
+        # corr/covar/skew/kurt/topK/windowFunnel/groupUniqArray are KEPT in lite
+        # because upstream DataStore tests use them.
         for sql in [
             "SELECT groupBitOr(toUInt32(number)) FROM numbers(10)",
             "SELECT sumMap(['a'], [1])",
             "SELECT groupArrayIntersect([1, 2, 3])",
-            "SELECT skewSamp(number) FROM numbers(100)",
-            "SELECT groupUniqArray(number % 5) FROM numbers(100)",
+            "SELECT groupBitmap(toUInt32(number)) FROM numbers(10)",
+            "SELECT exponentialMovingAverage(0.5)(number, number) FROM numbers(10)",
         ]:
             with self.subTest(sql=sql):
                 self._assert_not_found(sql)

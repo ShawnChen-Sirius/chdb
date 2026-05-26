@@ -146,6 +146,9 @@ if (CHDB_LITE)
     # CHDB_LITE=1 is the single switch read by all trim sites (CMake `if (CHDB_LITE)`
     # and C++ `#if defined(CHDB_LITE) && CHDB_LITE`).
     add_compile_definitions(CHDB_LITE=1)
+    # Drop niche hash-join strictnesses (ASOF/SEMI/ANTI) — see src/CMakeLists.txt
+    # for what this gates. Saves ~3-5 MB wheel; upstream DataStore tests don't use them.
+    set(CHDB_MINIMAL_HASH_JOIN ON CACHE BOOL "Auto-enabled by CHDB_LITE" FORCE)
     # ENABLE_MULTITARGET_CODE is intentionally LEFT ON: turning it off saves
     # ~1.5 MB wheel but costs 5-15% on hash/aggregation-heavy workloads
     # (uniq/uniqCombined, GROUP BY with many keys, hash-join build phase).

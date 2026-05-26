@@ -1726,7 +1726,7 @@ SELECT JSONExtractArrayRaw('{"a": "hello", "b": [-100, 200.0, "hello"]}', 'b') A
         FunctionDocumentation::IntroducedIn introduced_in = {20, 1};
         FunctionDocumentation::Category category = FunctionDocumentation::Category::JSON;
         FunctionDocumentation documentation = {description, syntax, arguments, {}, returned_value, examples, introduced_in, category};
-        CHDB_LITE_JSON(factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRaw, JSONExtractArrayRawImpl>>(documentation));
+        factory.registerFunction<JSONOverloadResolver<NameJSONExtractArrayRaw, JSONExtractArrayRawImpl>>(documentation);
     }
 
     /// JSONExtractKeysAndValuesRaw
