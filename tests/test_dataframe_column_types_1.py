@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import shutil
 import unittest
 import pandas as pd
@@ -11,6 +12,13 @@ import uuid
 import ipaddress
 
 STRING_DTYPE = "str" if pd.__version__ >= "3" else "object"
+
+# chdb-core-lite drops Int128/256, UInt128/256, Decimal128/256, BFloat16 from
+# the conversion / arithmetic / comparison templates. Queries that explicitly
+# build these types raise Code 46 (function `toInt128`/`toDecimal256`/... not
+# registered). Tests touching those types assert the clean failure instead of
+# skipping, matching the pattern used for base64/sqid/deltaLake.
+_LITE = os.environ.get("CHDB_LITE") == "1"
 
 
 class TestDataFrameColumnTypesOne(unittest.TestCase):
@@ -26,6 +34,11 @@ class TestDataFrameColumnTypesOne(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_integer_types(self):
+        if _LITE:
+            with self.assertRaises(Exception) as ctx:
+                self.session.query("SELECT toInt128('1'), toUInt256('1')", "DataFrame")
+            self.assertIn("Code: 46", str(ctx.exception))
+            return
         ret = self.session.query("""
             SELECT * FROM (
                 SELECT
@@ -113,6 +126,11 @@ class TestDataFrameColumnTypesOne(unittest.TestCase):
             self.assertEqual(actual_type, expected_type)
 
     def test_float_types(self):
+        if _LITE:
+            with self.assertRaises(Exception) as ctx:
+                self.session.query("SELECT toBFloat16(1.5)", "DataFrame")
+            self.assertIn("Code: 46", str(ctx.exception))
+            return
         ret = self.session.query("""
             SELECT * FROM (
                 SELECT
@@ -186,6 +204,11 @@ class TestDataFrameColumnTypesOne(unittest.TestCase):
 
     def test_float_special_values(self):
         """Test Infinity and NaN values for all float types"""
+        if _LITE:
+            with self.assertRaises(Exception) as ctx:
+                self.session.query("SELECT toBFloat16(1.0/0.0)", "DataFrame")
+            self.assertIn("Code: 46", str(ctx.exception))
+            return
         ret = self.session.query("""
             SELECT * FROM (
                 SELECT
@@ -277,6 +300,11 @@ class TestDataFrameColumnTypesOne(unittest.TestCase):
 
     def test_decimal_types(self):
         """Test Decimal32, Decimal64, Decimal128, Decimal256 types"""
+        if _LITE:
+            with self.assertRaises(Exception) as ctx:
+                self.session.query("SELECT toDecimal128('1.5', 2)", "DataFrame")
+            self.assertIn("Code: 46", str(ctx.exception))
+            return
         ret = self.session.query("""
             SELECT * FROM (
                 SELECT

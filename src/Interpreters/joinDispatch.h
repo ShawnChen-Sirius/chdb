@@ -63,6 +63,15 @@ template <bool prefer_use_maps_all> struct MapGetter<JoinKind::Full, JoinStrictn
 template <JoinKind kind, bool prefer_use_maps_all>
 struct MapGetter<kind, JoinStrictness::Asof, prefer_use_maps_all> { using Map = HashJoin::MapsAsof; static constexpr bool flagged = false; };
 
+#if defined(CHDB_MINIMAL_HASH_JOIN) && CHDB_MINIMAL_HASH_JOIN
+/// Trim niche strictnesses (Asof/Semi/Anti) to shrink hash-join binary size.
+/// Queries that use these will fail at runtime with "Wrong JOIN combination".
+static constexpr std::array<JoinStrictness, 3> STRICTNESSES = {
+    JoinStrictness::RightAny,
+    JoinStrictness::Any,
+    JoinStrictness::All,
+};
+#else
 static constexpr std::array<JoinStrictness, 6> STRICTNESSES = {
     JoinStrictness::RightAny,
     JoinStrictness::Any,
@@ -71,6 +80,7 @@ static constexpr std::array<JoinStrictness, 6> STRICTNESSES = {
     JoinStrictness::Semi,
     JoinStrictness::Anti,
 };
+#endif
 
 static constexpr std::array<JoinKind, 4> KINDS = {
     JoinKind::Left,

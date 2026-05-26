@@ -141,6 +141,30 @@ jobs:
             ./chdb/libpybind11nonlimitedapi_chdb_3.13.dylib
             ./chdb/libpybind11nonlimitedapi_chdb_3.14.dylib
           retention-days: 1
+      # ---------------------------------------------------------------------
+      # chdb-core-lite cross-compile: only the Python module (_chdb.abi3.so);
+      # libchdb.so / pybind11 dylibs are reused from the chdb-core build.
+      # ---------------------------------------------------------------------
+      - name: Build chdb-core-lite (cross-compile for macOS arm64)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 600
+        run: |
+          source ~/.cargo/env
+          # Hermetic re-configure under CHDB_LITE=1
+          rm -rf build-darwin-arm64
+          CHDB_LITE=1 bash ./chdb/build_mac_on_linux.sh arm64
+          # The lite build overwrote chdb/_chdb.abi3.so; save it under a
+          # distinct name so the chdb-core artifact uploaded above is unaffected.
+          mv chdb/_chdb.abi3.so chdb/_chdb-lite.abi3.so
+          ls -lh chdb/_chdb-lite.abi3.so
+        continue-on-error: false
+      - name: Upload chdb-core-lite build artifact
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-build-artifacts-lite
+          path: ./chdb/_chdb-lite.abi3.so
+          retention-days: 1
 
   test_on_macos:
     name: Test on macOS arm64
@@ -399,6 +423,84 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
+      # -----------------------------------------------------------------------
+      # chdb-core-lite: download the lite .abi3.so artifact, swap it in, build
+      # & test the slim variant wheel. setup.py rewrites pyproject.toml's name
+      # to "chdb-core-lite" when CHDB_LITE=1 (Restore step at the end undoes it).
+      # -----------------------------------------------------------------------
+      - name: Download chdb-core-lite build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-build-artifacts-lite
+          path: ./artifacts-lite
+      - name: Swap in chdb-core-lite .abi3.so and sign
+        run: |
+          mv ./artifacts-lite/_chdb-lite.abi3.so ./chdb/_chdb.abi3.so
+          codesign -f -s - ./chdb/_chdb.abi3.so
+          ls -lh ./chdb/_chdb.abi3.so
+      - name: Build chdb-core-lite wheel
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          rm -rf dist build chdb.egg-info
+          CHDB_LITE=1 make wheel
+          python -m wheel tags --platform-tag=macosx_11_0_arm64 --remove dist/chdb_core_lite-*.whl
+          ls -lh dist/
+      - name: Verify chdb-core-lite wheel size < 50 MiB
+        run: |
+          set -e
+          WHEEL=$(ls dist/chdb_core_lite-*macosx*.whl | head -1)
+          SIZE=$(wc -c < "$WHEEL" | tr -d ' ')
+          MAX=52428800
+          MIB=$(awk "BEGIN{printf \"%.2f\", $SIZE/1048576}")
+          if [ "$SIZE" -ge "$MAX" ]; then
+            echo "ERROR: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), must be < 50 MiB (52,428,800 bytes)"
+            exit 1
+          fi
+          echo "OK: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), under 50 MiB"
+      - name: Test chdb-core-lite wheel on Python 3.9 and 3.14
+        run: |
+          ulimit -c unlimited
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          for version in 3.9 3.14; do
+            echo "=============================================="
+            echo "Testing chdb-core-lite on Python $version"
+            echo "=============================================="
+            pyenv shell $version
+            python -m pip uninstall -y chdb-core || true
+            python -m pip uninstall -y chdb-core-lite || true
+            python -m pip install dist/chdb_core_lite-*.whl --force-reinstall --no-cache-dir
+            python -c "import chdb; res = chdb.query('select 1112222222,555', 'CSV'); print(f'Python $version: {res}')"
+            # Full test suite + lite-only tests (CHDB_LITE=1 unlocks tests/test_chdb_core_lite.py)
+            CHDB_LITE=1 make test
+            python -m pip uninstall -y chdb-core-lite
+            echo "=============================================="
+            echo "Tests PASSED on Python $version"
+            echo "=============================================="
+          done
+          pyenv shell --unset
+        continue-on-error: false
+      - name: Test chdb-core-lite DataStore tests against upstream chdb (latest tag)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 60
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.11
+          python -m pip uninstall -y chdb-core || true
+          python -m pip uninstall -y chdb-core-lite || true
+          python -m pip install dist/chdb_core_lite-*macosx*.whl --force-reinstall
+          CHDB_LITE=1 PYTHON=$(pyenv which python) bash ./chdb/test_chdb_datastore.sh
+          python -m pip uninstall -y chdb-core-lite
+          pyenv shell --unset
+        continue-on-error: false
+      - name: Restore pyproject.toml (chdb-core-lite build mutates it in place)
+        if: always()
+        run: git checkout -- pyproject.toml
       - name: Check and upload core files if present
         if: always()
         run: |
@@ -424,7 +526,13 @@ jobs:
       - name: Upload wheels to release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          gh release upload ${{ github.ref_name }} dist/*.whl --clobber
+          gh release upload ${{ github.ref_name }} dist/chdb_core-*.whl --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Upload chdb-core-lite wheel to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release upload ${{ github.ref_name }} dist/chdb_core_lite-*.whl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - name: Packege libchdb.so
@@ -464,7 +572,17 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.9
-          python -m twine upload dist/*.whl
+          python -m twine upload dist/chdb_core-*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      - name: Upload chdb-core-lite to pypi
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          python -m twine upload dist/chdb_core_lite-*.whl
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}

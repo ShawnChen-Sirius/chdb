@@ -108,7 +108,37 @@ fi
 
 cd ${BUILD_DIR}
 
-CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} \
+if [ "${CHDB_LITE}" = "1" ]; then
+    # chdb-core-lite for macOS: minimal arg list; the CHDB_LITE block in
+    # CMakeLists.txt fills in all trim flags / ENABLE_*=0 / linker flags.
+    # macOS-specific opt-outs (JEMALLOC=0, ICU=0, GLIBC_COMPATIBILITY=0, UNWIND=0)
+    # are passed explicitly here; the umbrella's `if (NOT DEFINED ${_flag})` guard
+    # preserves them.
+    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} \
+        -DCMAKE_AR:FILEPATH=${CMAKE_AR_FILEPATH} \
+        -DCMAKE_INSTALL_NAME_TOOL=${CMAKE_INSTALL_NAME_TOOL} \
+        -DCMAKE_RANLIB:FILEPATH=${CMAKE_RANLIB_FILEPATH} \
+        -DLINKER_NAME=${CMAKE_LINKER_NAME} \
+        -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE} \
+        -DENABLE_THINLTO=0 -DENABLE_TESTS=0 -DCHDB_LITE=ON \
+        -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
+        -DENABLE_CLICKHOUSE_KEEPER=0 -DENABLE_CLICKHOUSE_KEEPER_CONVERTER=0 \
+        -DENABLE_CLICKHOUSE_LOCAL=1 -DENABLE_CLICKHOUSE_SU=0 \
+        -DENABLE_CLICKHOUSE_BENCHMARK=0 -DENABLE_CLICKHOUSE_COPIER=0 \
+        -DENABLE_CLICKHOUSE_DISKS=0 -DENABLE_CLICKHOUSE_FORMAT=0 \
+        -DENABLE_CLICKHOUSE_GIT_IMPORT=0 -DENABLE_CLICKHOUSE_OBFUSCATOR=0 \
+        -DENABLE_CLICKHOUSE_ODBC_BRIDGE=0 -DENABLE_CLICKHOUSE_STATIC_FILES_DISK_UPLOADER=0 \
+        -DENABLE_CLICKHOUSE_ALL=0 \
+        -DUSE_STATIC_LIBRARIES=1 -DSPLIT_SHARED_LIBRARIES=0 \
+        -DENABLE_UTILS=0 -DENABLE_EXAMPLES=0 -DENABLE_BENCHMARKS=0 \
+        -DENABLE_FUZZING=OFF -DENABLE_BUZZHOUSE=OFF -DENABLE_FUZZER_TEST=OFF \
+        ${GLIBC_COMPATIBILITY} ${UNWIND} ${JEMALLOC} ${ICU} ${LLVM} \
+        ${CPU_FEATURES} \
+        -DENABLE_AVX512=0 -DENABLE_AVX512_VBMI=0 \
+        -DCHDB_VERSION=${CHDB_VERSION} \
+        "
+else
+    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} \
     -DCMAKE_AR:FILEPATH=${CMAKE_AR_FILEPATH} \
     -DCMAKE_INSTALL_NAME_TOOL=${CMAKE_INSTALL_NAME_TOOL} \
     -DCMAKE_RANLIB:FILEPATH=${CMAKE_RANLIB_FILEPATH} \
@@ -140,64 +170,68 @@ CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} \
     -DCHDB_VERSION=${CHDB_VERSION} \
     -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE} \
     "
+fi
 
 LIBCHDB_SO="libchdb.so"
-
-# Build libchdb.so
-echo "Executing cmake..."
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ..
-ninja -d keeprsp
-
 BINARY=${BUILD_DIR}/programs/clickhouse
-echo -e "\nBINARY: ${BINARY}"
-ls -lh ${BINARY}
-echo -e "\nfile info of ${BINARY}"
-file ${BINARY}
-rm -f ${BINARY}
 
-cd ${BUILD_DIR}
-ninja -d keeprsp -v > build.log || true
-USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+# chdb-core-lite only ships the Python module (_chdb.abi3.so); skip the
+# standalone libchdb.so cross-compile path entirely.
+if [ "${CHDB_LITE}" != "1" ]; then
+    # Build libchdb.so
+    echo "Executing cmake..."
+    cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ..
+    ninja -d keeprsp
+    echo -e "\nBINARY: ${BINARY}"
+    ls -lh ${BINARY}
+    echo -e "\nfile info of ${BINARY}"
+    file ${BINARY}
+    rm -f ${BINARY}
 
-if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
-    if [ -f CMakeFiles/clickhouse.rsp ]; then
-        cp -a CMakeFiles/clickhouse.rsp CMakeFiles/libchdb.rsp
-    else
-        echo "CMakeFiles/clickhouse.rsp not found"
-        exit 1
+    cd ${BUILD_DIR}
+    ninja -d keeprsp -v > build.log || true
+    USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+
+    if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
+        if [ -f CMakeFiles/clickhouse.rsp ]; then
+            cp -a CMakeFiles/clickhouse.rsp CMakeFiles/libchdb.rsp
+        else
+            echo "CMakeFiles/clickhouse.rsp not found"
+            exit 1
+        fi
     fi
+
+    LIBCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
+        | sed "s/-o programs\/clickhouse/-fPIC -shared -o ${LIBCHDB_SO}/" \
+        | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
+        | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
+        | sed 's/ -Xlinker --no-undefined//g' \
+        | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g' \
+         )
+
+    # Generate the command to generate libchdb.so
+    LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g')
+
+    if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
+        ${SED_INPLACE} 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g' CMakeFiles/libchdb.rsp
+    fi
+
+    # For macOS, replace PyInit entry point with exported symbols for libchdb
+    LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${PYINIT_ENTRY}'/ -Wl,-exported_symbol,_query_stable -Wl,-exported_symbol,_free_result -Wl,-exported_symbol,_query_stable_v2 -Wl,-exported_symbol,_free_result_v2/g')
+
+    LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g')
+
+    # Save the command to a file for debug
+    echo ${LIBCHDB_CMD} > libchdb_cmd.sh
+
+    # Build libchdb.so
+    echo "Building libchdb.so..."
+    ${LIBCHDB_CMD}
+
+    LIBCHDB_DIR=${BUILD_DIR}/
+    LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
+    ls -lh ${LIBCHDB}
 fi
-
-LIBCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
-    | sed "s/-o programs\/clickhouse/-fPIC -shared -o ${LIBCHDB_SO}/" \
-    | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
-    | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
-    | sed 's/ -Xlinker --no-undefined//g' \
-    | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g' \
-     )
-
-# Generate the command to generate libchdb.so
-LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g')
-
-if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
-    ${SED_INPLACE} 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g' CMakeFiles/libchdb.rsp
-fi
-
-# For macOS, replace PyInit entry point with exported symbols for libchdb
-LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${PYINIT_ENTRY}'/ -Wl,-exported_symbol,_query_stable -Wl,-exported_symbol,_free_result -Wl,-exported_symbol,_query_stable_v2 -Wl,-exported_symbol,_free_result_v2/g')
-
-LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g')
-
-# Save the command to a file for debug
-echo ${LIBCHDB_CMD} > libchdb_cmd.sh
-
-# Build libchdb.so
-echo "Building libchdb.so..."
-${LIBCHDB_CMD}
-
-LIBCHDB_DIR=${BUILD_DIR}/
-LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
-ls -lh ${LIBCHDB}
 
 # Build chdb python module
 CHDB_PYTHON_INCLUDE_DIR_PREFIX="${HOME}/python_include"
@@ -251,31 +285,36 @@ if [ ${build_type} == "Debug" ]; then
 else
     echo -e "\nStrip the binary:"
     ${STRIP} -x ${PYCHDB}
-    ${STRIP} -x ${LIBCHDB}
+    [ "${CHDB_LITE}" != "1" ] && ${STRIP} -x ${LIBCHDB}
 fi
 
 echo -e "\nPYCHDB: ${PYCHDB}"
 ls -lh ${PYCHDB}
-echo -e "\nLIBCHDB: ${LIBCHDB}"
-ls -lh ${LIBCHDB}
 echo -e "\nfile info of ${PYCHDB}"
 file ${PYCHDB}
-echo -e "\nfile info of ${LIBCHDB}"
-file ${LIBCHDB}
+
+if [ "${CHDB_LITE}" != "1" ]; then
+    echo -e "\nLIBCHDB: ${LIBCHDB}"
+    ls -lh ${LIBCHDB}
+    echo -e "\nfile info of ${LIBCHDB}"
+    file ${LIBCHDB}
+fi
 
 rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
-cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
+[ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
 echo -e "\nSymbols:"
 echo -e "\nPyInit in PYCHDB: ${PYCHDB}"
 ${NM} ${PYCHDB} | grep PyInit || true
-echo -e "\nPyInit in LIBCHDB: ${LIBCHDB}"
-${NM} ${LIBCHDB} | grep PyInit || echo "PyInit not found in ${LIBCHDB}, it's OK"
 echo -e "\nquery_stable in PYCHDB: ${PYCHDB}"
 ${NM} ${PYCHDB} | grep query_stable || true
-echo -e "\nquery_stable in LIBCHDB: ${LIBCHDB}"
-${NM} ${LIBCHDB} | grep query_stable || true
+if [ "${CHDB_LITE}" != "1" ]; then
+    echo -e "\nPyInit in LIBCHDB: ${LIBCHDB}"
+    ${NM} ${LIBCHDB} | grep PyInit || echo "PyInit not found in ${LIBCHDB}, it's OK"
+    echo -e "\nquery_stable in LIBCHDB: ${LIBCHDB}"
+    ${NM} ${LIBCHDB} | grep query_stable || true
+fi
 
 echo -e "\nAfter copy:"
 cd ${PROJ_DIR} && pwd
@@ -311,9 +350,9 @@ ${OTOOL} -L ${CHDB_DIR}/${CHDB_PY_MODULE}
 
 echo -e "\nCross-compilation for macOS ${TARGET_ARCH} completed successfully!"
 echo -e "Generated files:"
-echo -e "  - ${PROJ_DIR}/${LIBCHDB_SO}"
+[ "${CHDB_LITE}" != "1" ] && echo -e "  - ${PROJ_DIR}/${LIBCHDB_SO}"
 echo -e "  - ${CHDB_DIR}/${CHDB_PY_MODULE}"
 echo -e "\nFile sizes:"
-ls -lh ${PROJ_DIR}/${LIBCHDB_SO}
+[ "${CHDB_LITE}" != "1" ] && ls -lh ${PROJ_DIR}/${LIBCHDB_SO}
 ls -lh ${CHDB_DIR}/${CHDB_PY_MODULE}
 echo -e "\nBuild directory: ${BUILD_DIR}"
