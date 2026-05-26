@@ -8,12 +8,22 @@ import chdb
 from chdb import session
 from chdb.state import connect
 
+try:
+    from chdb.datastore import DataStore as _DataStore
+    _HAS_DATASTORE = True
+except ImportError:
+    _DataStore = None
+    _HAS_DATASTORE = False
+
 
 def _datastore_cls():
-    from chdb.datastore import DataStore
-    return DataStore
+    return _DataStore
 
 
+@unittest.skipUnless(
+    _HAS_DATASTORE,
+    "chdb (DataStore API) not installed; skipping DataStore output_format tests",
+)
 class TestDataStoreOutputFormat(unittest.TestCase):
     """Verify output_format="DataStore" across query / Connection / Session / send_query."""
 
@@ -89,9 +99,13 @@ class TestDataStoreOutputFormat(unittest.TestCase):
                 collected.extend(list(chunk["n"]))
             self.assertEqual(collected, list(range(10)))
 
+
+class TestDataStoreImportError(unittest.TestCase):
+    """Exercise the missing-chdb-package code path. Runs regardless of whether
+    chdb (DataStore API) is installed: if installed, we block the import via
+    sys.meta_path; if not installed, the import naturally fails."""
+
     def test_missing_chdb_package_raises_import_error(self):
-        """If chdb.datastore is unavailable, DataStore output must raise ImportError."""
-        # Simulate chdb-ds not being installed by blocking the import path.
         saved_modules = {
             name: sys.modules[name]
             for name in list(sys.modules)
@@ -102,7 +116,11 @@ class TestDataStoreOutputFormat(unittest.TestCase):
 
         class _Blocker:
             def find_spec(self, fullname, path=None, target=None):
-                if fullname == "chdb.datastore" or fullname == "datastore" or fullname.startswith("datastore."):
+                if (
+                    fullname == "chdb.datastore"
+                    or fullname == "datastore"
+                    or fullname.startswith("datastore.")
+                ):
                     raise ImportError(f"blocked for test: {fullname}")
                 return None
 
