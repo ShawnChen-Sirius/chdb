@@ -473,7 +473,7 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.9
-          rm -rf dist build chdb.egg-info
+          rm -rf build chdb.egg-info
           CHDB_LITE=1 make wheel
           python -m wheel tags --platform-tag=macosx_10_15_x86_64 --remove dist/chdb_core_lite-*.whl
           ls -lh dist/
