@@ -448,16 +448,24 @@ jobs:
       - name: Verify debug symbols are usable
         run: |
           ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
-          # addr2line -f outputs two lines: function name, then source:line. With
-          # RelWithDebInfo inlining the function name at a PC may resolve to a
-          # neighbouring inlined function (e.g. PyInit__chdb's PC may map to a
-          # static initializer the compiler merged adjacent), so we don't require
-          # an exact symbol-name match - just that DWARF can resolve the address
-          # to a real function and a real source location.
+          # Two layers of check:
+          # 1. Build-ID match: linker-generated SHA1 stored in .note.gnu.build-id
+          #    is preserved by objcopy --only-keep-debug, and gdb/lldb match the
+          #    .debug to its .so via this ID. Mismatch means wrong-pairing (e.g.
+          #    a lite-build .debug crept in on top of a non-lite .so).
+          # 2. addr2line resolves PC → (function, source:line). RelWithDebInfo
+          #    inlining can substitute a neighbouring function name at the PC,
+          #    so we don't require name equality - only that DWARF answers with
+          #    a non-"??" function and a non-"??:0" source location.
           verify() {
             local so=$1 symbol=$2 debug=$3
             [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
             [ -f "$debug" ] || { echo "FAIL: missing $debug"; exit 1; }
+            local so_id=$(readelf -n "$so"    | awk '/Build ID/{print $NF}')
+            local dbg_id=$(readelf -n "$debug" | awk '/Build ID/{print $NF}')
+            [ -n "$so_id" ] && [ -n "$dbg_id" ] || { echo "FAIL: missing Build-ID (so='$so_id' debug='$dbg_id')"; exit 1; }
+            [ "$so_id" = "$dbg_id" ] || { echo "FAIL: Build-ID mismatch $so_id vs $dbg_id"; exit 1; }
+            echo "$so Build-ID matches $debug: $so_id"
             local addr=$(nm -D --defined-only "$so" | awk -v s="$symbol" '$3 == s {print $1; exit}')
             [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
             local out=$("$ADDR2LINE" -fe "$debug" "0x$addr")
