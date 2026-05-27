@@ -8,6 +8,11 @@ set -e
 # Parse arguments
 TARGET_ARCH=${1:-x86_64}
 build_type=${2:-RelWithDebInfo}
+
+# chdb-core-lite has a 50 MiB wheel budget; -g would bloat past it.
+if [ "${CHDB_LITE}" = "1" ] && [ "${build_type}" = "RelWithDebInfo" ]; then
+    build_type="Release"
+fi
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 . ${DIR}/vars.sh cross-compile
 

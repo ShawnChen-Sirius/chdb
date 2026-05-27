@@ -5,6 +5,11 @@ set -e
 # default to RelWithDebInfo to preserve debug symbols for crash analysis
 build_type=${1:-RelWithDebInfo}
 
+# chdb-core-lite has a 50 MiB wheel budget; -g would bloat past it.
+if [ "${CHDB_LITE}" = "1" ] && [ "${build_type}" = "RelWithDebInfo" ]; then
+    build_type="Release"
+fi
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 # Setup LLVM path BEFORE sourcing vars.sh so that llvm tools can be found
