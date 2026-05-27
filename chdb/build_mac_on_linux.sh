@@ -282,15 +282,14 @@ LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
 
 if [ ${build_type} == "Debug" ]; then
     echo -e "\nDebug build, skip strip and debug symbol extraction"
-elif [ ${build_type} == "RelWithDebInfo" ]; then
+elif [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
     echo -e "\nExtracting debug symbols before strip..."
     DSYMUTIL=$(which dsymutil-19 2>/dev/null || which llvm-dsymutil-19 2>/dev/null || which dsymutil 2>/dev/null || which llvm-dsymutil 2>/dev/null || which ${CCTOOLS_BIN}/${DARWIN_TRIPLE}-dsymutil 2>/dev/null || true)
     if [ -n "${DSYMUTIL}" ]; then
         ${DSYMUTIL} ${PYCHDB} -o ${PYCHDB}.dSYM
-        [ "${CHDB_LITE}" != "1" ] && ${DSYMUTIL} ${LIBCHDB} -o ${LIBCHDB}.dSYM
+        ${DSYMUTIL} ${LIBCHDB} -o ${LIBCHDB}.dSYM
         echo "Debug symbols extracted:"
-        du -sh ${PYCHDB}.dSYM
-        [ "${CHDB_LITE}" != "1" ] && du -sh ${LIBCHDB}.dSYM
+        du -sh ${PYCHDB}.dSYM ${LIBCHDB}.dSYM
     else
         echo "ERROR: llvm-dsymutil not found, cannot extract debug symbols"
         exit 1
@@ -298,7 +297,7 @@ elif [ ${build_type} == "RelWithDebInfo" ]; then
 
     echo -e "\nStrip the binary:"
     ${STRIP} -S -x ${PYCHDB}
-    [ "${CHDB_LITE}" != "1" ] && ${STRIP} -S -x ${LIBCHDB}
+    ${STRIP} -S -x ${LIBCHDB}
 else
     echo -e "\n${build_type} build, strip without debug symbol extraction"
     ${STRIP} -S -x ${PYCHDB}
@@ -321,9 +320,9 @@ rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
 [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
-if [ ${build_type} == "RelWithDebInfo" ]; then
+if [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
     cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
-    [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+    cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
 fi
 
 echo -e "\nSymbols:"

@@ -428,6 +428,37 @@ jobs:
           pyenv shell --unset
         continue-on-error: false
       # -----------------------------------------------------------------------
+      # Verify+package debug symbols BEFORE the chdb-core-lite swap below.
+      # "Swap in chdb-core-lite .abi3.so" replaces chdb/_chdb.abi3.so with the
+      # lite binary; running verify after that would compare lite binary against
+      # non-lite .dSYM and report a false UUID mismatch.
+      # -----------------------------------------------------------------------
+      - name: Verify debug symbols are usable
+        run: |
+          verify() {
+            local so=$1 symbol=$2 dsym=$3
+            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
+            [ -d "$dsym" ] || { echo "FAIL: missing $dsym"; exit 1; }
+            local bin_uuid=$(dwarfdump --uuid "$so" | awk '{print $2}')
+            local dsym_uuid=$(dwarfdump --uuid "$dsym" | awk '{print $2}')
+            [ -n "$bin_uuid" ] && [ -n "$dsym_uuid" ] || { echo "FAIL: empty UUID (bin='$bin_uuid' dsym='$dsym_uuid')"; exit 1; }
+            [ "$bin_uuid" = "$dsym_uuid" ] || { echo "FAIL: UUID mismatch $bin_uuid vs $dsym_uuid"; exit 1; }
+            echo "$so UUID matches $dsym: $bin_uuid"
+            local addr=$(nm -gU "$so" | awk -v s="_$symbol" '$3 == s {print "0x" $1; exit}')
+            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
+            local dwarf="$dsym/Contents/Resources/DWARF/$(basename "$so")"
+            local resolved=$(atos -o "$dwarf" "$addr")
+            echo "atos $dwarf $addr -> $resolved"
+            echo "$resolved" | grep -q "$symbol" || { echo "FAIL: atos returned '$resolved'"; exit 1; }
+          }
+          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.dSYM
+          verify libchdb.so query_stable libchdb.so.dSYM
+      - name: Package debug symbols
+        run: |
+          ls *.dSYM
+          tar -czvf macos-arm64-debuginfo.tar.gz *.dSYM
+          ls -lh macos-arm64-debuginfo.tar.gz
+      # -----------------------------------------------------------------------
       # chdb-core-lite: download the lite .abi3.so artifact, swap it in, build
       # & test the slim variant wheel. setup.py rewrites pyproject.toml's name
       # to "chdb-core-lite" when CHDB_LITE=1 (Restore step at the end undoes it).
@@ -562,35 +593,6 @@ jobs:
           gh release upload ${{ github.ref_name }} macos-arm64-libchdb-static.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-      - name: Verify debug symbols are usable
-        run: |
-          verify() {
-            local so=$1 symbol=$2 dsym=$3
-            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
-            [ -d "$dsym" ] || { echo "FAIL: missing $dsym"; exit 1; }
-            local bin_uuid=$(dwarfdump --uuid "$so" | awk '{print $2}')
-            local dsym_uuid=$(dwarfdump --uuid "$dsym" | awk '{print $2}')
-            [ -n "$bin_uuid" ] && [ -n "$dsym_uuid" ] || { echo "FAIL: empty UUID (bin='$bin_uuid' dsym='$dsym_uuid')"; exit 1; }
-            [ "$bin_uuid" = "$dsym_uuid" ] || { echo "FAIL: UUID mismatch $bin_uuid vs $dsym_uuid"; exit 1; }
-            echo "$so UUID matches $dsym: $bin_uuid"
-            local addr=$(nm -gU "$so" | awk -v s="_$symbol" '$3 == s {print "0x" $1; exit}')
-            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
-            local dwarf="$dsym/Contents/Resources/DWARF/$(basename "$so")"
-            local resolved=$(atos -o "$dwarf" "$addr")
-            echo "atos $dwarf $addr -> $resolved"
-            echo "$resolved" | grep -q "$symbol" || { echo "FAIL: atos returned '$resolved'"; exit 1; }
-          }
-          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.dSYM
-          if [ -f libchdb.so ]; then
-            verify libchdb.so query_stable libchdb.so.dSYM
-          else
-            echo "libchdb.so not present, skipping (lite build?)"
-          fi
-      - name: Package debug symbols
-        run: |
-          ls *.dSYM
-          tar -czvf macos-arm64-debuginfo.tar.gz *.dSYM
-          ls -lh macos-arm64-debuginfo.tar.gz
       - name: Upload debug symbols to release
         if: startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true

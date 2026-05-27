@@ -440,6 +440,32 @@ jobs:
           pyenv shell --unset
         continue-on-error: false
       # -----------------------------------------------------------------------
+      # Verify+package debug symbols BEFORE the chdb-core-lite build below.
+      # The lite build re-runs chdb/build.sh which overwrites chdb/_chdb.abi3.so
+      # in place; running verify after that would compare lite binary against
+      # non-lite .debug and report a false UUID mismatch.
+      # -----------------------------------------------------------------------
+      - name: Verify debug symbols are usable
+        run: |
+          ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
+          verify() {
+            local so=$1 symbol=$2 debug=$3
+            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
+            [ -f "$debug" ] || { echo "FAIL: missing $debug"; exit 1; }
+            local addr=$(nm -D --defined-only "$so" | awk -v s="$symbol" '$3 == s {print $1; exit}')
+            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
+            local out=$("$ADDR2LINE" -fe "$debug" "0x$addr")
+            echo "$debug @ 0x$addr -> $out"
+            echo "$out" | grep -q "$symbol" || { echo "FAIL: symbol resolution returned '$out'"; exit 1; }
+          }
+          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.debug
+          verify libchdb.so query_stable libchdb.so.debug
+      - name: Package debug symbols
+        run: |
+          ls *.debug
+          tar -czvf linux-aarch64-debuginfo.tar.gz *.debug
+          ls -lh linux-aarch64-debuginfo.tar.gz
+      # -----------------------------------------------------------------------
       # chdb-core-lite: slim variant build & smoke test (~50 MB wheel)
       # chdb/build.sh's CHDB_LITE branch skips the libchdb.so link entirely —
       # only _chdb.abi3.so is produced (lite is Python-only).
@@ -599,30 +625,6 @@ jobs:
           gh release upload ${{ github.ref_name }} linux-aarch64-libchdb-static.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-      - name: Verify debug symbols are usable
-        run: |
-          ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
-          verify() {
-            local so=$1 symbol=$2 debug=$3
-            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
-            [ -f "$debug" ] || { echo "FAIL: missing $debug"; exit 1; }
-            local addr=$(nm -D --defined-only "$so" | awk -v s="$symbol" '$3 == s {print $1; exit}')
-            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
-            local out=$("$ADDR2LINE" -fe "$debug" "0x$addr")
-            echo "$debug @ 0x$addr -> $out"
-            echo "$out" | grep -q "$symbol" || { echo "FAIL: symbol resolution returned '$out'"; exit 1; }
-          }
-          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.debug
-          if [ -f libchdb.so ]; then
-            verify libchdb.so query_stable libchdb.so.debug
-          else
-            echo "libchdb.so not present, skipping (lite build?)"
-          fi
-      - name: Package debug symbols
-        run: |
-          ls *.debug
-          tar -czvf linux-aarch64-debuginfo.tar.gz *.debug
-          ls -lh linux-aarch64-debuginfo.tar.gz
       - name: Upload debug symbols to release
         if: startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true

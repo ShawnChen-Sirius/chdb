@@ -284,22 +284,20 @@ LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
 
 if [ ${build_type} == "Debug" ]; then
     echo -e "\nDebug build, skip strip and debug symbol extraction"
-elif [ ${build_type} == "RelWithDebInfo" ]; then
+elif [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
     echo -e "\nExtracting debug symbols before strip..."
     if [ "$(uname)" == "Darwin" ]; then
         dsymutil ${PYCHDB} -o ${PYCHDB}.dSYM
-        [ "${CHDB_LITE}" != "1" ] && dsymutil ${LIBCHDB} -o ${LIBCHDB}.dSYM
+        dsymutil ${LIBCHDB} -o ${LIBCHDB}.dSYM
         echo "Debug symbols extracted:"
-        du -sh ${PYCHDB}.dSYM
-        [ "${CHDB_LITE}" != "1" ] && du -sh ${LIBCHDB}.dSYM
+        du -sh ${PYCHDB}.dSYM ${LIBCHDB}.dSYM
     else
         OBJCOPY=$(which llvm-objcopy-19 2>/dev/null || which llvm-objcopy 2>/dev/null || which objcopy 2>/dev/null)
         if [ -n "${OBJCOPY}" ]; then
             ${OBJCOPY} --only-keep-debug ${PYCHDB} ${PYCHDB}.debug
-            [ "${CHDB_LITE}" != "1" ] && ${OBJCOPY} --only-keep-debug ${LIBCHDB} ${LIBCHDB}.debug
+            ${OBJCOPY} --only-keep-debug ${LIBCHDB} ${LIBCHDB}.debug
             echo "Debug symbols extracted:"
-            ls -lh ${PYCHDB}.debug
-            [ "${CHDB_LITE}" != "1" ] && ls -lh ${LIBCHDB}.debug
+            ls -lh ${PYCHDB}.debug ${LIBCHDB}.debug
         else
             echo "ERROR: objcopy not found, cannot extract debug symbols"
             exit 1
@@ -309,12 +307,12 @@ elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nStrip the binary:"
     if [ "$(uname)" == "Darwin" ]; then
         ${STRIP} -S -x ${PYCHDB}
-        [ "${CHDB_LITE}" != "1" ] && ${STRIP} -S -x ${LIBCHDB}
+        ${STRIP} -S -x ${LIBCHDB}
     else
         ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
-        [ "${CHDB_LITE}" != "1" ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
         ${OBJCOPY} --add-gnu-debuglink=${PYCHDB}.debug ${PYCHDB}
-        [ "${CHDB_LITE}" != "1" ] && ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
+        ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
     fi
 else
     echo -e "\n${build_type} build, strip without debug symbol extraction"
@@ -347,13 +345,13 @@ rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
 [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
-if [ ${build_type} == "RelWithDebInfo" ]; then
+if [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
     if [ "$(uname)" == "Darwin" ]; then
         cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
-        [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+        cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
     else
         cp -a ${PYCHDB}.debug ${PROJ_DIR}/${CHDB_PY_MODULE}.debug
-        [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
+        cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
     fi
 fi
 
