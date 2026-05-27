@@ -302,6 +302,21 @@ add_object_library(clickhouse_planner Planner)
 add_object_library(clickhouse_interpreters Interpreters)
 add_object_library(clickhouse_interpreters_cache Interpreters/Cache)
 add_object_library(clickhouse_interpreters_hash_join Interpreters/HashJoin)
+# Niche storage engines (Distributed/WindowView/KeeperMap) — gated in registerStorages.cpp
+# via `#if defined(CHDB_LITE) && CHDB_LITE`; the umbrella's add_compile_definitions(CHDB_LITE=1)
+# is enough, no per-trim flag needed.
+option(CHDB_MINIMAL_HASH_JOIN "Drop niche hash-join variants (ASOF/ANTI/SEMI) to reduce binary size" OFF)
+if (CHDB_MINIMAL_HASH_JOIN)
+    message(STATUS "CHDB_MINIMAL_HASH_JOIN: dropping ASOF/ANTI/SEMI hash-join variants")
+    # joinDispatch.h shrinks STRICTNESSES to {RightAny,Any,All}, so no TU instantiates
+    # HashJoinMethods<*, Asof|Semi|Anti, *>. Drop their .cpp's to skip the codegen.
+    foreach (variant Asof Anti Semi)
+        foreach (kind Inner Left Right Full)
+            list(REMOVE_ITEM dbms_sources Interpreters/HashJoin/${kind}HashJoin${variant}.cpp)
+        endforeach()
+    endforeach()
+    add_compile_definitions(CHDB_MINIMAL_HASH_JOIN=1)
+endif()
 add_object_library(clickhouse_interpreters_access Interpreters/Access)
 add_object_library(clickhouse_interpreters_mysql Interpreters/MySQL)
 add_object_library(clickhouse_interpreters_clusterproxy Interpreters/ClusterProxy)

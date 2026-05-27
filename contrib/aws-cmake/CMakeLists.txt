@@ -367,14 +367,20 @@ file(GLOB AWS_SDKUTILS_SRC
 list(APPEND AWS_SOURCES ${AWS_SDKUTILS_SRC})
 list(APPEND AWS_PUBLIC_INCLUDES "${AWS_SDKUTILS_DIR}/include/")
 
-# aws glue
-file(GLOB AWS_SDK_GLUE_SRC
-    "${AWS_SDK_GLUE_DIR}/source/*.cpp"
-    "${AWS_SDK_GLUE_DIR}/source/model/*.cpp"
-)
+# aws glue (used for Iceberg/DataLake catalog operations only)
+if (NOT CHDB_LITE)
+    file(GLOB AWS_SDK_GLUE_SRC
+        "${AWS_SDK_GLUE_DIR}/source/*.cpp"
+        "${AWS_SDK_GLUE_DIR}/source/model/*.cpp"
+    )
 
-list(APPEND AWS_SOURCES ${AWS_SDK_GLUE_SRC})
-list(APPEND AWS_PUBLIC_INCLUDES "${AWS_SDK_GLUE_DIR}/include/")
+    list(APPEND AWS_SOURCES ${AWS_SDK_GLUE_SRC})
+    list(APPEND AWS_PUBLIC_INCLUDES "${AWS_SDK_GLUE_DIR}/include/")
+else()
+    message(STATUS "CHDB_LITE: dropping AWS Glue SDK (Iceberg catalog ops not used)")
+    # Always include the include path so any header references still resolve
+    list(APPEND AWS_PUBLIC_INCLUDES "${AWS_SDK_GLUE_DIR}/include/")
+endif()
 
 list(APPEND AWS_SOURCES ${AWS_STUBS})
 

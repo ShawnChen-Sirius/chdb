@@ -4,6 +4,7 @@
 
 #include <Core/DecimalComparison.h>
 #include <Columns/ColumnArray.h>
+#include <Columns/ColumnConst.h>
 #include <Columns/ColumnTuple.h>
 #include <Columns/ColumnMap.h>
 #include <Columns/ColumnDynamic.h>
@@ -37,6 +38,7 @@
 #include <Core/DecimalFunctions.h>
 #include <IO/WriteHelpers.h>
 #include <base/types.h>
+#include <base/wide_integer_to_string.h>
 
 namespace DB
 {
@@ -772,6 +774,499 @@ py::object convertFieldToPython(
 	default:
 		throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unsupported type {}", type->getName());
 	}
+}
+
+static bool isExpectedFloat(const DataTypePtr & expected_type)
+{
+    if (!expected_type)
+        return false;
+    auto id = removeNullable(expected_type)->getTypeId();
+    return id == TypeIndex::Float32 || id == TypeIndex::Float64;
+}
+
+py::object convertColumnValueForUDF(
+    const IColumn & column,
+    const DataTypePtr & type,
+    size_t index,
+    const DataTypePtr & expected_type)
+{
+    if (column.isNullAt(index))
+        return py::none();
+
+    if (const auto * col_const = typeid_cast<const ColumnConst *>(&column))
+        return convertColumnValueForUDF(col_const->getDataColumn(), type, 0, expected_type);
+
+    DataTypePtr actual_type = removeNullable(type);
+    auto & import_cache = PythonImporter::ImportCache();
+    auto type_id = actual_type->getTypeId();
+
+    switch (type_id)
+    {
+    case TypeIndex::UInt8:
+    {
+        auto field = column[index];
+        if (isBool(actual_type))
+            return py::cast(field.safeGet<bool>());
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<UInt64>()));
+        return py::cast(field.safeGet<UInt64>());
+    }
+    case TypeIndex::UInt16:
+    case TypeIndex::UInt32:
+    case TypeIndex::UInt64:
+    {
+        auto field = column[index];
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<UInt64>()));
+        return py::cast(field.safeGet<UInt64>());
+    }
+    case TypeIndex::UInt128:
+    {
+        auto field = column[index];
+        auto s = wide::to_string(field.safeGet<UInt128>());
+        auto * result = PyLong_FromString(s.c_str(), nullptr, 10);
+        if (!result)
+            throw py::error_already_set();
+        return py::reinterpret_steal<py::object>(result);
+    }
+    case TypeIndex::UInt256:
+    {
+        auto field = column[index];
+        auto s = wide::to_string(field.safeGet<UInt256>());
+        auto * result = PyLong_FromString(s.c_str(), nullptr, 10);
+        if (!result)
+            throw py::error_already_set();
+        return py::reinterpret_steal<py::object>(result);
+    }
+    case TypeIndex::Int8:
+    case TypeIndex::Int16:
+    case TypeIndex::Int32:
+    case TypeIndex::Int64:
+    {
+        auto field = column[index];
+        if (isExpectedFloat(expected_type))
+            return py::cast(static_cast<double>(field.safeGet<Int64>()));
+        return py::cast(field.safeGet<Int64>());
+    }
+    case TypeIndex::Int128:
+    {
+        auto field = column[index];
+        auto s = wide::to_string(field.safeGet<Int128>());
+        auto * result = PyLong_FromString(s.c_str(), nullptr, 10);
+        if (!result)
+            throw py::error_already_set();
+        return py::reinterpret_steal<py::object>(result);
+    }
+    case TypeIndex::Int256:
+    {
+        auto field = column[index];
+        auto s = wide::to_string(field.safeGet<Int256>());
+        auto * result = PyLong_FromString(s.c_str(), nullptr, 10);
+        if (!result)
+            throw py::error_already_set();
+        return py::reinterpret_steal<py::object>(result);
+    }
+    case TypeIndex::Float32:
+    case TypeIndex::Float64:
+    case TypeIndex::BFloat16:
+    {
+        auto field = column[index];
+        return py::cast(field.safeGet<Float64>());
+    }
+    case TypeIndex::String:
+    case TypeIndex::FixedString:
+    {
+        auto field = column[index];
+        return py::cast(field.safeGet<String>());
+    }
+    case TypeIndex::Date:
+    {
+        auto field = column[index];
+        auto days = field.safeGet<UInt64>();
+        LocalDate ld(DayNum(static_cast<UInt16>(days)));
+        return import_cache.datetime.date()(ld.year(), ld.month(), ld.day());
+    }
+    case TypeIndex::Date32:
+    {
+        auto field = column[index];
+        auto days = field.safeGet<Int64>();
+        LocalDate ld(ExtendedDayNum(static_cast<Int32>(days)));
+        return import_cache.datetime.date()(ld.year(), ld.month(), ld.day());
+    }
+    case TypeIndex::DateTime:
+    {
+        auto field = column[index];
+        auto seconds = field.safeGet<UInt64>();
+
+        const auto * dt_type = typeid_cast<const DataTypeDateTime *>(actual_type.get());
+        const auto & utc_tz = DateLUT::instance("UTC");
+        const auto & tz = dt_type ? dt_type->getTimeZone() : utc_tz;
+
+        LocalDateTime local_dt(static_cast<time_t>(seconds), tz);
+        const String & tz_name = tz.getTimeZone();
+        auto tz_obj = import_cache.zoneinfo.ZoneInfo()(tz_name);
+        return import_cache.datetime.datetime()(
+            local_dt.year(), local_dt.month(), local_dt.day(),
+            local_dt.hour(), local_dt.minute(), local_dt.second(),
+            0, py::arg("tzinfo") = tz_obj);
+    }
+    case TypeIndex::DateTime64:
+    {
+        auto field = column[index];
+        auto dt64_field = field.safeGet<DecimalField<DateTime64>>();
+        Int64 ticks = dt64_field.getValue().value;
+
+        const auto * dt64_type = typeid_cast<const DataTypeDateTime64 *>(actual_type.get());
+        const auto & utc_tz = DateLUT::instance("UTC");
+        const auto & tz = dt64_type ? dt64_type->getTimeZone() : utc_tz;
+
+        UInt32 scale = dt64_field.getScale();
+        Int64 multiplier = DecimalUtils::scaleMultiplier<DateTime64::NativeType>(scale);
+        auto seconds = static_cast<time_t>(ticks / multiplier);
+        auto fractional = ticks % multiplier;
+        int microsecond = static_cast<int>((fractional * 1000000) / multiplier);
+
+        LocalDateTime local_dt(seconds, tz);
+        const String & tz_name = tz.getTimeZone();
+        auto tz_obj = import_cache.zoneinfo.ZoneInfo()(tz_name);
+        return import_cache.datetime.datetime()(
+            local_dt.year(), local_dt.month(), local_dt.day(),
+            local_dt.hour(), local_dt.minute(), local_dt.second(),
+            microsecond, py::arg("tzinfo") = tz_obj);
+    }
+    case TypeIndex::Time:
+    {
+        auto field = column[index];
+        return convertTimeFieldToPython(field);
+    }
+
+    case TypeIndex::Time64:
+    {
+        auto field = column[index];
+        return convertTime64FieldToPython(field);
+    }
+
+    case TypeIndex::Enum8:
+    {
+        auto field = column[index];
+        try
+        {
+            const auto & enum_type = typeid_cast<const DataTypeEnum8 &>(*type);
+            auto it = enum_type.findByValue(static_cast<Int8>(field.safeGet<Int64>()));
+            String enum_name(it->second.data(), it->second.size());
+            return py::cast(enum_name);
+        }
+        catch (...)
+        {
+            return py::cast(field.dump());
+        }
+    }
+
+    case TypeIndex::Enum16:
+    {
+        auto field = column[index];
+        try
+        {
+            const auto & enum_type = typeid_cast<const DataTypeEnum16 &>(*type);
+            auto it = enum_type.findByValue(static_cast<Int16>(field.safeGet<Int64>()));
+            String enum_name(it->second.data(), it->second.size());
+            return py::cast(enum_name);
+        }
+        catch (...)
+        {
+            return py::cast(field.dump());
+        }
+    }
+
+    case TypeIndex::Decimal32:
+    {
+        auto field = column[index];
+        auto decimal_field = field.safeGet<DecimalField<Decimal32>>();
+        auto decimal_value = decimal_field.getValue();
+        UInt32 scale = decimal_field.getScale();
+        double result = DecimalUtils::convertTo<double>(decimal_value, scale);
+        return py::cast(result);
+    }
+
+    case TypeIndex::Decimal64:
+    {
+        auto field = column[index];
+        auto decimal_field = field.safeGet<DecimalField<Decimal64>>();
+        auto decimal_value = decimal_field.getValue();
+        UInt32 scale = decimal_field.getScale();
+        double result = DecimalUtils::convertTo<double>(decimal_value, scale);
+        return py::cast(result);
+    }
+
+    case TypeIndex::Decimal128:
+    {
+        auto field = column[index];
+        auto decimal_field = field.safeGet<DecimalField<Decimal128>>();
+        auto decimal_value = decimal_field.getValue();
+        UInt32 scale = decimal_field.getScale();
+        double result = DecimalUtils::convertTo<double>(decimal_value, scale);
+        return py::cast(result);
+    }
+
+    case TypeIndex::Decimal256:
+    {
+        auto field = column[index];
+        auto decimal_field = field.safeGet<DecimalField<Decimal256>>();
+        auto decimal_value = decimal_field.getValue();
+        UInt32 scale = decimal_field.getScale();
+        double result = DecimalUtils::convertTo<double>(decimal_value, scale);
+        return py::cast(result);
+    }
+
+    case TypeIndex::UUID:
+    {
+        auto field = column[index];
+        auto uuid_value = field.safeGet<UUID>();
+        const auto formatted_uuid = formatUUID(uuid_value);
+        return import_cache.uuid.UUID()(String(formatted_uuid.data(), formatted_uuid.size()));
+    }
+
+	case TypeIndex::Array:
+    {
+        const auto & array_column = typeid_cast<const ColumnArray &>(column);
+
+        const auto * array_type = typeid_cast<const DataTypeArray *>(actual_type.get());
+        chassert(array_type);
+
+        const auto & element_type = array_type->getNestedType();
+        const auto & offsets = array_column.getOffsets();
+        const auto & nested_column = array_column.getDataPtr();
+
+        size_t start_offset = (index == 0) ? 0 : offsets[index - 1];
+        size_t end_offset = offsets[index];
+
+        py::list python_list;
+        for (size_t i = start_offset; i < end_offset; ++i)
+        {
+            auto python_element = convertFieldToPython(*nested_column, element_type, i);
+            python_list.append(python_element);
+        }
+
+        return python_list;
+    }
+
+	case TypeIndex::Tuple:
+    {
+        const auto & tuple_column = typeid_cast<const ColumnTuple &>(column);
+
+        const auto * tuple_type = typeid_cast<const DataTypeTuple *>(actual_type.get());
+        chassert(tuple_type);
+
+        const auto & element_types = tuple_type->getElements();
+        const auto & tuple_columns = tuple_column.getColumns();
+
+        py::tuple python_tuple(tuple_columns.size());
+        for (size_t i = 0; i < tuple_columns.size(); ++i)
+        {
+            auto python_element = convertFieldToPython(*(tuple_columns[i]), element_types[i], index);
+            python_tuple[i] = python_element;
+        }
+
+        return python_tuple;
+    }
+
+	case TypeIndex::Interval:
+    {
+        auto field = column[index];
+        auto interval_value = field.safeGet<Int64>();
+        const auto * interval_type = typeid_cast<const DataTypeInterval *>(actual_type.get());
+        chassert(interval_type);
+        IntervalKind::Kind interval_kind = interval_type->getKind();
+
+        switch (interval_kind)
+        {
+            case IntervalKind::Kind::Nanosecond:
+                return import_cache.datetime.timedelta()(py::arg("microseconds") = interval_value / 1000);
+            case IntervalKind::Kind::Microsecond:
+                return import_cache.datetime.timedelta()(py::arg("microseconds") = interval_value);
+            case IntervalKind::Kind::Millisecond:
+                return import_cache.datetime.timedelta()(py::arg("milliseconds") = interval_value);
+            case IntervalKind::Kind::Second:
+                return import_cache.datetime.timedelta()(py::arg("seconds") = interval_value);
+            case IntervalKind::Kind::Minute:
+                return import_cache.datetime.timedelta()(py::arg("minutes") = interval_value);
+            case IntervalKind::Kind::Hour:
+                return import_cache.datetime.timedelta()(py::arg("hours") = interval_value);
+            case IntervalKind::Kind::Day:
+                return import_cache.datetime.timedelta()(py::arg("days") = interval_value);
+            case IntervalKind::Kind::Week:
+                return import_cache.datetime.timedelta()(py::arg("weeks") = interval_value);
+            case IntervalKind::Kind::Month:
+                /// Approximate: 1 month = 30 days
+                return import_cache.datetime.timedelta()(py::arg("days") = interval_value * 30);
+            case IntervalKind::Kind::Quarter:
+                /// 1 quarter = 3 months = 90 days
+                return import_cache.datetime.timedelta()(py::arg("days") = interval_value * 90);
+            case IntervalKind::Kind::Year:
+                /// 1 year = 365 days
+                return import_cache.datetime.timedelta()(py::arg("days") = interval_value * 365);
+            default:
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "Unsupported interval kind");
+        }
+    }
+
+	case TypeIndex::Map:
+    {
+        const auto & map_column = typeid_cast<const ColumnMap &>(column);
+
+        const auto * map_type = typeid_cast<const DataTypeMap *>(actual_type.get());
+        chassert(map_type);
+
+        const auto & key_type = map_type->getKeyType();
+        const auto & value_type = map_type->getValueType();
+
+        /// Get the nested array column containing tuples
+        const auto & nested_array = map_column.getNestedColumn();
+        const auto & array_column = typeid_cast<const ColumnArray &>(nested_array);
+
+        const auto & offsets = array_column.getOffsets();
+        const auto & tuple_column_ptr = array_column.getDataPtr();
+        const auto & tuple_column = typeid_cast<const ColumnTuple &>(*tuple_column_ptr);
+
+        size_t start_offset = (index == 0) ? 0 : offsets[index - 1];
+        size_t end_offset = offsets[index];
+
+        const auto & key_column = tuple_column.getColumn(0);
+        const auto & value_column = tuple_column.getColumn(1);
+
+        bool use_dict = canTypeBeUsedAsDictKey(key_type);
+
+        if (use_dict)
+        {
+            py::dict python_dict;
+            for (size_t i = start_offset; i < end_offset; ++i)
+            {
+                auto python_key = convertFieldToPython(key_column, key_type, i);
+                auto python_value = convertFieldToPython(value_column, value_type, i);
+
+                python_dict[std::move(python_key)] = std::move(python_value);
+            }
+
+            return python_dict;
+        }
+        else
+        {
+            py::list keys_list;
+            py::list values_list;
+            for (size_t i = start_offset; i < end_offset; ++i)
+            {
+                auto python_key = convertFieldToPython(key_column, key_type, i);
+                auto python_value = convertFieldToPython(value_column, value_type, i);
+
+                keys_list.append(std::move(python_key));
+                values_list.append(std::move(python_value));
+            }
+
+            py::dict python_dict;
+            python_dict["keys"] = std::move(keys_list);
+            python_dict["values"] = std::move(values_list);
+
+            return python_dict;
+        }
+    }
+
+	case TypeIndex::Variant:
+    {
+        const auto & variant_column = typeid_cast<const ColumnVariant &>(column);
+        auto discriminator = variant_column.globalDiscriminatorAt(index);
+        if (discriminator == ColumnVariant::NULL_DISCRIMINATOR)
+        {
+            return py::none();
+        }
+
+        const auto & variant_type = typeid_cast<const DataTypeVariant &>(*actual_type);
+        const auto & variants = variant_type.getVariants();
+        const auto & variant_data_type = variants[discriminator];
+
+        auto offset = variant_column.offsetAt(index);
+        const auto & variant_inner_column = variant_column.getVariantByGlobalDiscriminator(discriminator);
+
+        return convertFieldToPython(variant_inner_column, variant_data_type, offset);
+    }
+
+
+    case TypeIndex::Dynamic:
+    {
+        const auto & dynamic_column = typeid_cast<const ColumnDynamic &>(column);
+        const auto & variant_column = dynamic_column.getVariantColumn();
+
+        /// Check if this row has value in shared variant
+        if (variant_column.globalDiscriminatorAt(index) == dynamic_column.getSharedVariantDiscriminator())
+        {
+            /// Get data from shared variant and deserialize it
+            auto value = dynamic_column.getSharedVariant().getDataAt(variant_column.offsetAt(index));
+            ReadBufferFromMemory buf(value.data(), value.size());
+            auto variant_type = decodeDataType(buf);
+            auto tmp_variant_column = variant_type->createColumn();
+            auto variant_serialization = variant_type->getDefaultSerialization();
+            variant_serialization->deserializeBinary(*tmp_variant_column, buf, FormatSettings{});
+
+            /// Convert the deserialized value
+            return convertFieldToPython(*tmp_variant_column, variant_type, 0);
+        }
+        else
+        {
+            /// Use variant conversion logic directly
+            return convertFieldToPython(variant_column, dynamic_column.getVariantInfo().variant_type, index);
+        }
+    }
+
+    case TypeIndex::Object:
+    {
+        return convertObjectToPython(column, actual_type, index);
+    }
+
+	case TypeIndex::IPv4:
+    {
+        auto field = column[index];
+        auto ipv4_value = field.safeGet<IPv4>();
+
+        char ipv4_str[IPV4_MAX_TEXT_LENGTH];
+        char * ptr = ipv4_str;
+        formatIPv4(reinterpret_cast<const unsigned char*>(&ipv4_value), ptr);
+        const size_t ipv4_str_len = ptr - ipv4_str;
+
+        return import_cache.ipaddress.ipv4_address()(String(ipv4_str, ipv4_str_len));
+    }
+
+    case TypeIndex::IPv6:
+    {
+        auto field = column[index];
+        auto ipv6_value = field.safeGet<IPv6>();
+
+        char ipv6_str[IPV6_MAX_TEXT_LENGTH];
+        char * ptr = ipv6_str;
+        formatIPv6(reinterpret_cast<const unsigned char*>(&ipv6_value), ptr);
+        const size_t ipv6_str_len = ptr - ipv6_str;
+
+        return import_cache.ipaddress.ipv6_address()(String(ipv6_str, ipv6_str_len));
+    }
+
+	/// Set types are used only in WHERE clauses for IN operations, not in actual data storage
+	case TypeIndex::Set:
+	/// JSONPaths is an internal type used only for JSON schema inference,
+	case TypeIndex::JSONPaths:
+	/// Function types are not actual data types, should not appear here
+	case TypeIndex::Function:
+	/// Aggregate function types are not actual data types, should not appear here
+	case TypeIndex::AggregateFunction:
+	/// LowCardinality should be unwrapped before reaching this point
+	case TypeIndex::LowCardinality:
+	/// Nullable cannot contain another Nullable type, so this should not appear in nested conversion
+	case TypeIndex::Nullable:
+	/// QBit type is supported in newer versions of ClickHouse
+	/// case TypeIndex::QBit:
+    default:
+        throw Exception(
+            ErrorCodes::NOT_IMPLEMENTED,
+            "Python UDF does not support type '{}'",
+            actual_type->getName());
+    }
 }
 
 } // namespace CHDB

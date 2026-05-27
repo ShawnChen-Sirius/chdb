@@ -40,6 +40,7 @@ if (USE_PYTHON)
         NumpyNestedTypes.cpp
         NumpyType.cpp
         ObjectToPython.cpp
+        PyDateTimeHelper.cpp
         PandasAnalyzer.cpp
         PandasDataFrame.cpp
         PandasDataFrameBuilder.cpp
@@ -50,6 +51,10 @@ if (USE_PYTHON)
         PybindWrapper.cpp
         PythonConversion.cpp
         PythonDict.cpp
+        ChdbGlobalFunctions.cpp
+        ChdbPyType.cpp
+        PythonScalarUDF.cpp
+        PythonUDFRegistry.cpp
         PythonReader.cpp
         PythonTableCache.cpp
         PythonImportCache.cpp
@@ -101,10 +106,13 @@ set (CLICKHOUSE_LOCAL_LINK
         clickhouse_parsers
         clickhouse_storages_system
         clickhouse_table_functions
-        ch_contrib::parquet
 )
 
 clickhouse_program_add(local)
+
+if (TARGET ch_contrib::parquet)
+    target_link_libraries(clickhouse-local-lib PRIVATE ch_contrib::parquet)
+endif()
 
 if (USE_PYTHON)
     target_include_directories(clickhouse-local-lib PRIVATE

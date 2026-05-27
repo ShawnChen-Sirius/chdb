@@ -94,7 +94,31 @@ if [ ! -d $BUILD_DIR ]; then
 fi
 
 cd ${BUILD_DIR}
-CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_XRAY=0 -DENABLE_TESTS=0 -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
+
+if [ "${CHDB_LITE}" = "1" ]; then
+    # chdb-core-lite: keep this argument list minimal. CMakeLists.txt's
+    # CHDB_LITE block fills in all ENABLE_*=0 / trim flags / linker flags.
+    # MinSizeRel is forced by the CHDB_LITE block too, but we override if user
+    # passed a different build_type explicitly.
+    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_TESTS=0 -DCHDB_LITE=ON \
+        -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
+        -DENABLE_CLICKHOUSE_KEEPER=0 -DENABLE_CLICKHOUSE_KEEPER_CONVERTER=0 \
+        -DENABLE_CLICKHOUSE_LOCAL=1 -DENABLE_CLICKHOUSE_SU=0 \
+        -DENABLE_CLICKHOUSE_BENCHMARK=0 -DENABLE_CLICKHOUSE_COPIER=0 \
+        -DENABLE_CLICKHOUSE_DISKS=0 -DENABLE_CLICKHOUSE_FORMAT=0 \
+        -DENABLE_CLICKHOUSE_GIT_IMPORT=0 -DENABLE_CLICKHOUSE_OBFUSCATOR=0 \
+        -DENABLE_CLICKHOUSE_ODBC_BRIDGE=0 -DENABLE_CLICKHOUSE_STATIC_FILES_DISK_UPLOADER=0 \
+        -DENABLE_CLICKHOUSE_ALL=0 \
+        -DUSE_STATIC_LIBRARIES=1 -DSPLIT_SHARED_LIBRARIES=0 \
+        -DENABLE_UTILS=0 -DENABLE_EXAMPLES=0 -DENABLE_BENCHMARKS=0 \
+        -DENABLE_FUZZING=OFF -DENABLE_BUZZHOUSE=OFF -DENABLE_FUZZER_TEST=OFF \
+        ${GLIBC_COMPATIBILITY} ${UNWIND} \
+        ${CPU_FEATURES} \
+        -DENABLE_AVX512=0 -DENABLE_AVX512_VBMI=0 \
+        -DCHDB_VERSION=${CHDB_VERSION} \
+        "
+else
+    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_XRAY=0 -DENABLE_TESTS=0 -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
     -DENABLE_CLICKHOUSE_KEEPER=0 -DENABLE_CLICKHOUSE_KEEPER_CONVERTER=0 -DENABLE_CLICKHOUSE_LOCAL=1 -DENABLE_CLICKHOUSE_SU=0 -DENABLE_CLICKHOUSE_BENCHMARK=0 \
     -DENABLE_AZURE_BLOB_STORAGE=1 -DENABLE_CLICKHOUSE_COPIER=0 -DENABLE_CLICKHOUSE_DISKS=0 -DENABLE_CLICKHOUSE_FORMAT=0 -DENABLE_CLICKHOUSE_GIT_IMPORT=0 \
     -DENABLE_AWS_S3=1 -DENABLE_HIVE=0 -DENABLE_AVRO=1 \
@@ -120,6 +144,7 @@ CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_XRAY=0 
     -DENABLE_LIBFIU=1 \
     -DCHDB_VERSION=${CHDB_VERSION} \
     "
+fi
 
 # Only disable compiler cache when neither ccache nor sccache is available.
 # On Linux CI the Docker image provides ccache; preserve it for fast incremental builds.
@@ -128,67 +153,69 @@ if ! command -v ccache >/dev/null 2>&1 && ! command -v sccache >/dev/null 2>&1; 
 fi
 
 LIBCHDB_SO="libchdb.so"
-# Build libchdb.so
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ${PROJ_DIR}
-ninja -d keeprsp
-
-
 BINARY=${BUILD_DIR}/programs/clickhouse
-echo -e "\nBINARY: ${BINARY}"
-ls -lh ${BINARY}
-echo -e "\nldd ${BINARY}"
-${LDD} ${BINARY}
-rm -f ${BINARY}
+# chdb-core-lite only ships the Python module (_chdb.abi3.so), so skip the
+# standalone libchdb.so build entirely. It saves ~half the link time.
+if [ "${CHDB_LITE}" != "1" ]; then
+    # Build libchdb.so
+    cmake ${CMAKE_ARGS} -DENABLE_PYTHON=0 ${PROJ_DIR}
+    ninja -d keeprsp
+    echo -e "\nBINARY: ${BINARY}"
+    ls -lh ${BINARY}
+    echo -e "\nldd ${BINARY}"
+    ${LDD} ${BINARY}
+    rm -f ${BINARY}
 
-cd ${BUILD_DIR}
-ninja -d keeprsp -v > build.log || true
-USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+    cd ${BUILD_DIR}
+    ninja -d keeprsp -v > build.log || true
+    USING_RESPONSE_FILE=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
 
-if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
-    if [ -f CMakeFiles/clickhouse.rsp ]; then
-        cp -a CMakeFiles/clickhouse.rsp CMakeFiles/libchdb.rsp
-    else
-        echo "CMakeFiles/clickhouse.rsp not found"
-        exit 1
+    if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
+        if [ -f CMakeFiles/clickhouse.rsp ]; then
+            cp -a CMakeFiles/clickhouse.rsp CMakeFiles/libchdb.rsp
+        else
+            echo "CMakeFiles/clickhouse.rsp not found"
+            exit 1
+        fi
     fi
+
+    LIBCHDB_CMD=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log \
+        | sed "s/-o programs\/clickhouse/-fPIC -shared -o ${LIBCHDB_SO}/" \
+        | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
+        | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
+        | sed 's/ -Xlinker --no-undefined//g' \
+        | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g' \
+         )
+
+    #   generate the command to generate libchdb.so
+    LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g')
+
+    if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
+        ${SED_INPLACE} 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g' CMakeFiles/libchdb.rsp
+    fi
+
+    # Control exported symbols for libchdb.so
+    if [ "$(uname)" == "Darwin" ]; then
+        # macOS: use exported_symbols_list file
+        LIBCHDB_CMD="${LIBCHDB_CMD} -Wl,-exported_symbols_list,${CHDB_DIR}/libchdb_export_macos.txt"
+    else
+        # Linux: use version script
+        LIBCHDB_CMD="${LIBCHDB_CMD} -Wl,--version-script=${CHDB_DIR}/libchdb_export.map"
+    fi
+
+    LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g')
+
+    # Step 4:
+    #   save the command to a file for debug
+    echo ${LIBCHDB_CMD} > libchdb_cmd.sh
+
+    # Step 5:
+    ${LIBCHDB_CMD}
+
+    LIBCHDB_DIR=${BUILD_DIR}/
+    LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
+    ls -lh ${LIBCHDB}
 fi
-
-LIBCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
-    | sed "s/-o programs\/clickhouse/-fPIC -shared -o ${LIBCHDB_SO}/" \
-    | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
-    | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
-    | sed 's/ -Xlinker --no-undefined//g' \
-    | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g' \
-     )
-
-#   generate the command to generate libchdb.so
-LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g')
-
-if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
-    ${SED_INPLACE} 's/ '${CHDB_PY_MODULE}'/ '${LIBCHDB_SO}'/g' CMakeFiles/libchdb.rsp
-fi
-
-# Control exported symbols for libchdb.so
-if [ "$(uname)" == "Darwin" ]; then
-    # macOS: use exported_symbols_list file
-    LIBCHDB_CMD="${LIBCHDB_CMD} -Wl,-exported_symbols_list,${CHDB_DIR}/libchdb_export_macos.txt"
-else
-    # Linux: use version script
-    LIBCHDB_CMD="${LIBCHDB_CMD} -Wl,--version-script=${CHDB_DIR}/libchdb_export.map"
-fi
-
-LIBCHDB_CMD=$(echo ${LIBCHDB_CMD} | sed 's/@CMakeFiles\/clickhouse.rsp/@CMakeFiles\/libchdb.rsp/g')
-
-# Step 4:
-#   save the command to a file for debug
-echo ${LIBCHDB_CMD} > libchdb_cmd.sh
-
-# Step 5:
-${LIBCHDB_CMD}
-
-LIBCHDB_DIR=${BUILD_DIR}/
-LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
-ls -lh ${LIBCHDB}
 
 # build chdb python module
 py_version="3.9"
@@ -207,7 +234,7 @@ ninja -d keeprsp || true
 cd ${BUILD_DIR}
 ninja -d keeprsp -v > build.log || true
 
-USING_RESPONSE_FILE=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
+USING_RESPONSE_FILE=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log | grep '@CMakeFiles/clickhouse.rsp' || true)
 
 if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
     if [ -f CMakeFiles/clickhouse.rsp ]; then
@@ -219,7 +246,7 @@ if [ ! "${USING_RESPONSE_FILE}" == "" ]; then
 fi
 
 # extract the command to generate CHDB_PY_MODULE
-PYCHDB_CMD=$(grep -m 1 'clang++.*-o programs/clickhouse .*' build.log \
+PYCHDB_CMD=$(grep -m 1 'clang.*-o programs/clickhouse .*' build.log \
     | sed "s/-o programs\/clickhouse/-fPIC -Wl,-undefined,dynamic_lookup -shared -o ${CHDB_PY_MODULE}/" \
     | sed 's/^[^&]*&& //' | sed 's/&&.*//' \
     | sed 's/ -Wl,-undefined,error/ -Wl,-undefined,dynamic_lookup/g' \
@@ -261,16 +288,18 @@ elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nExtracting debug symbols before strip..."
     if [ "$(uname)" == "Darwin" ]; then
         dsymutil ${PYCHDB} -o ${PYCHDB}.dSYM
-        dsymutil ${LIBCHDB} -o ${LIBCHDB}.dSYM
+        [ "${CHDB_LITE}" != "1" ] && dsymutil ${LIBCHDB} -o ${LIBCHDB}.dSYM
         echo "Debug symbols extracted:"
-        du -sh ${PYCHDB}.dSYM ${LIBCHDB}.dSYM
+        du -sh ${PYCHDB}.dSYM
+        [ "${CHDB_LITE}" != "1" ] && du -sh ${LIBCHDB}.dSYM
     else
         OBJCOPY=$(which llvm-objcopy-19 2>/dev/null || which llvm-objcopy 2>/dev/null || which objcopy 2>/dev/null)
         if [ -n "${OBJCOPY}" ]; then
             ${OBJCOPY} --only-keep-debug ${PYCHDB} ${PYCHDB}.debug
-            ${OBJCOPY} --only-keep-debug ${LIBCHDB} ${LIBCHDB}.debug
+            [ "${CHDB_LITE}" != "1" ] && ${OBJCOPY} --only-keep-debug ${LIBCHDB} ${LIBCHDB}.debug
             echo "Debug symbols extracted:"
-            ls -lh ${PYCHDB}.debug ${LIBCHDB}.debug
+            ls -lh ${PYCHDB}.debug
+            [ "${CHDB_LITE}" != "1" ] && ls -lh ${LIBCHDB}.debug
         else
             echo "ERROR: objcopy not found, cannot extract debug symbols"
             exit 1
@@ -280,60 +309,65 @@ elif [ ${build_type} == "RelWithDebInfo" ]; then
     echo -e "\nStrip the binary:"
     if [ "$(uname)" == "Darwin" ]; then
         ${STRIP} -S -x ${PYCHDB}
-        ${STRIP} -S -x ${LIBCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${STRIP} -S -x ${LIBCHDB}
     else
         ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
-        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
         ${OBJCOPY} --add-gnu-debuglink=${PYCHDB}.debug ${PYCHDB}
-        ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
     fi
 else
     echo -e "\n${build_type} build, strip without debug symbol extraction"
     if [ "$(uname)" == "Darwin" ]; then
         ${STRIP} -S -x ${PYCHDB}
-        ${STRIP} -S -x ${LIBCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${STRIP} -S -x ${LIBCHDB}
     else
         ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
-        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
     fi
 fi
 
 echo -e "\nPYCHDB: ${PYCHDB}"
 ls -lh ${PYCHDB}
-echo -e "\nLIBCHDB: ${LIBCHDB}"
-ls -lh ${LIBCHDB}
 echo -e "\nldd ${PYCHDB}"
 ${LDD} ${PYCHDB}
 echo -e "\nfile info of ${PYCHDB}"
 file ${PYCHDB}
-echo -e "\nldd ${LIBCHDB}"
-${LDD} ${LIBCHDB}
-echo -e "\nfile info of ${LIBCHDB}"
-file ${LIBCHDB}
+
+if [ "${CHDB_LITE}" != "1" ]; then
+    echo -e "\nLIBCHDB: ${LIBCHDB}"
+    ls -lh ${LIBCHDB}
+    echo -e "\nldd ${LIBCHDB}"
+    ${LDD} ${LIBCHDB}
+    echo -e "\nfile info of ${LIBCHDB}"
+    file ${LIBCHDB}
+fi
 
 rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
-cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
+[ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
 
 if [ ${build_type} == "RelWithDebInfo" ]; then
     if [ "$(uname)" == "Darwin" ]; then
         cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
-        cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+        [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
     else
         cp -a ${PYCHDB}.debug ${PROJ_DIR}/${CHDB_PY_MODULE}.debug
-        cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
+        [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
     fi
 fi
 
 echo -e "\nSymbols:"
 echo -e "\nPyInit in PYCHDB: ${PYCHDB}"
 ${NM} ${PYCHDB} | grep PyInit || true
-echo -e "\nPyInit in LIBCHDB: ${LIBCHDB}"
-${NM} ${LIBCHDB} | grep PyInit || echo "PyInit not found in ${LIBCHDB}, it's OK"
 echo -e "\nquery_stable in PYCHDB: ${PYCHDB}"
 ${NM} ${PYCHDB} | grep query_stable || true
-echo -e "\nquery_stable in LIBCHDB: ${LIBCHDB}"
-${NM} ${LIBCHDB} | grep query_stable || true
+if [ "${CHDB_LITE}" != "1" ]; then
+    echo -e "\nPyInit in LIBCHDB: ${LIBCHDB}"
+    ${NM} ${LIBCHDB} | grep PyInit || echo "PyInit not found in ${LIBCHDB}, it's OK"
+    echo -e "\nquery_stable in LIBCHDB: ${LIBCHDB}"
+    ${NM} ${LIBCHDB} | grep query_stable || true
+fi
 
 echo -e "\nAfter copy:"
 cd ${PROJ_DIR} && pwd

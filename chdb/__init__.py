@@ -39,8 +39,10 @@ class ChdbError(Exception):
 
 
 _arrow_format = set({"arrowtable"})
+_df_format = set({"dataframe", "datastore"})
 _process_result_format_funs = {
     "arrowtable": lambda x: to_arrowTable(x),
+    "datastore": lambda x: to_datastore(x),
 }
 
 # If any UDF is defined, the path of the UDF will be set to this variable
@@ -118,6 +120,22 @@ def to_arrowTable(res):
 
     memview = res.get_memview()
     return pa.RecordBatchFileReader(memview.view()).read_all()
+
+
+def to_datastore(df):
+    """Wrap a pandas DataFrame in a chdb DataStore.
+
+    Requires the ``chdb`` pip package (providing the DataStore API) to be
+    installed alongside ``chdb-core``.
+    """
+    try:
+        from chdb.datastore import DataStore
+    except ImportError as e:
+        raise ImportError(
+            'DataStore output format requires the chdb package. '
+            'Install it via "pip install chdb".'
+        ) from e
+    return DataStore(df)
 
 
 # global connection lock, for multi-threading use of legacy chdb.query()
@@ -237,9 +255,9 @@ def query(sql, output_format="CSV", path="", udf_path="", params=None, options=N
                 conn.set_progress_callback(progress_callback)
 
         try:
-            if lower_output_format == "dataframe":
+            if lower_output_format in _df_format:
                 res = conn.query_df(sql, params=params)
-                return res
+                return result_func(res)
 
             res = conn.query(sql, output_format, params=params)
 
@@ -258,8 +276,13 @@ sql = query
 
 
 PyReader = _chdb.PyReader
+create_function = _chdb.create_function
+drop_function = _chdb.drop_function
+NullHandling = _chdb.NullHandling
+ExceptionHandling = _chdb.ExceptionHandling
 
 from . import dbapi, session, udf, utils  # noqa: E402
+from .udf import func  # noqa: E402
 from .state import connect  # noqa: E402
 
 __all__ = [
@@ -268,10 +291,16 @@ __all__ = [
     "ChdbError",
     "query",
     "sql",
+    "func",
+    "create_function",
+    "drop_function",
+    "NullHandling",
+    "ExceptionHandling",
     "chdb_version",
     "engine_version",
     "to_df",
     "to_arrowTable",
+    "to_datastore",
     "dbapi",
     "session",
     "udf",

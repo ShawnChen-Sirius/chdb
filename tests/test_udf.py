@@ -1,7 +1,11 @@
 #!python3
 
 import unittest
+import datetime
+import chdb
 from chdb.udf import chdb_udf
+from chdb import func
+from chdb.sqltypes import INT64, FLOAT64, STRING, BOOL, DATE
 from chdb.session import Session
 from chdb import query, sql
 
@@ -55,6 +59,7 @@ class TestUDFinSession(unittest.TestCase):
             # sql is a alias for query
             ret = session.sql("select sum_udf2(11, 22)", "CSV")
             self.assertEqual(str(ret), '"33"\n')
+
 
 if __name__ == "__main__":
     unittest.main()

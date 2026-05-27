@@ -114,6 +114,98 @@ if (ENABLE_PYTHON)
     set(USE_UTF8PROC 1)
 endif()
 
+# -----------------------------------------------------------------------------
+# CHDB_LITE: umbrella flag for building the slim chdb-core-lite variant.
+# When ON, gates all chdb trim sites (CMake `if (CHDB_LITE)` plus C++
+# `#if defined(CHDB_LITE) && CHDB_LITE`), disables ~30 optional libraries,
+# switches to MinSizeRel, and adds the RELR linker flag.
+#
+# Build chdb-core (default, full ~158 MB):
+#     bash chdb/build.sh
+# Build chdb-core-lite (~50 MB):
+#     CHDB_LITE=1 bash chdb/build.sh   # or pass -DCHDB_LITE=ON to cmake
+# -----------------------------------------------------------------------------
+option(CHDB_LITE "Build slim chdb-core-lite variant (~50 MB wheel, fewer features)" OFF)
+
+# Allow env var to flip the flag for build.sh callers
+if (NOT CHDB_LITE AND DEFINED ENV{CHDB_LITE} AND "$ENV{CHDB_LITE}" STREQUAL "1")
+    set(CHDB_LITE ON CACHE BOOL "Enabled via CHDB_LITE env var" FORCE)
+endif()
+
+if (CHDB_LITE)
+    message(STATUS "")
+    message(STATUS "=== CHDB_LITE: building chdb-core-lite (slim) variant ===")
+    message(STATUS "")
+
+    # MinSizeRel for size optimization (-Os). -Oz is more aggressive but broke
+    # the libllvmlibc archive (eliminated cross-TU statics like libc_errno).
+    if (NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "None" OR CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(CMAKE_BUILD_TYPE MinSizeRel CACHE STRING "Forced by CHDB_LITE" FORCE)
+    endif()
+
+    # CHDB_LITE=1 is the single switch read by all trim sites (CMake `if (CHDB_LITE)`
+    # and C++ `#if defined(CHDB_LITE) && CHDB_LITE`).
+    add_compile_definitions(CHDB_LITE=1)
+    # Drop niche hash-join strictnesses (ASOF/SEMI/ANTI) — see src/CMakeLists.txt
+    # for what this gates. Saves ~3-5 MB wheel; upstream DataStore tests don't use them.
+    set(CHDB_MINIMAL_HASH_JOIN ON CACHE BOOL "Auto-enabled by CHDB_LITE" FORCE)
+    # ENABLE_MULTITARGET_CODE is intentionally LEFT ON: turning it off saves
+    # ~1.5 MB wheel but costs 5-15% on hash/aggregation-heavy workloads
+    # (uniq/uniqCombined, GROUP BY with many keys, hash-join build phase).
+
+    # Master switch: ENABLE_LIBRARIES=0 turns off all optional libs by default;
+    # we then opt-in only what chdb-core-lite needs.
+    if (NOT DEFINED ENABLE_LIBRARIES)
+        set(ENABLE_LIBRARIES OFF CACHE BOOL "Auto-disabled by CHDB_LITE")
+    endif()
+
+    # Heavy / niche optional libs explicitly disabled
+    set(_chdb_lite_libs_off
+        ENABLE_HDFS ENABLE_GSASL_LIBRARY ENABLE_KRB5
+        ENABLE_MYSQL ENABLE_LIBPQXX
+        ENABLE_AZURE_BLOB_STORAGE ENABLE_HIVE
+        ENABLE_AVRO ENABLE_ROCKSDB ENABLE_SQLITE
+        ENABLE_KAFKA ENABLE_NATS ENABLE_AMQPCPP ENABLE_NURAFT
+        ENABLE_CASSANDRA ENABLE_ODBC ENABLE_NLP ENABLE_LDAP
+        ENABLE_RUST ENABLE_DELTA_KERNEL_RS
+        ENABLE_VECTORSCAN ENABLE_MSGPACK
+        ENABLE_H3 ENABLE_CLIENT_AI ENABLE_LIBFIU
+        ENABLE_EMBEDDED_COMPILER ENABLE_DWARF_PARSER
+        ENABLE_ICU ENABLE_S2_GEOMETRY ENABLE_USEARCH ENABLE_SIMSIMD
+        ENABLE_BCRYPT ENABLE_BZIP2 ENABLE_CAPNP ENABLE_DATASKETCHES
+        ENABLE_FASTOPS ENABLE_GRPC ENABLE_IDNA ENABLE_JWT_CPP
+        ENABLE_LIBURING ENABLE_MINIZIP ENABLE_POCKETFFT
+        ENABLE_SIMDCOMP ENABLE_SQIDS ENABLE_SSH ENABLE_ULID
+        ENABLE_YAML_CPP ENABLE_BASE64
+        ENABLE_GOOGLE_CLOUD_CPP ENABLE_GOOGLE_CLOUD_CPP_KMS
+        ENABLE_XRAY
+    )
+    foreach (_flag IN LISTS _chdb_lite_libs_off)
+        if (NOT DEFINED ${_flag})
+            set(${_flag} OFF CACHE BOOL "Auto-disabled by CHDB_LITE")
+        endif()
+    endforeach()
+
+    # Opt-in: features chdb-core-lite needs to keep working
+    set(_chdb_lite_libs_on
+        ENABLE_PARQUET ENABLE_THRIFT ENABLE_RAPIDJSON
+        ENABLE_PROTOBUF ENABLE_BROTLI
+        ENABLE_AWS_S3 ENABLE_CURL
+        ENABLE_SIMDJSON
+        ENABLE_JEMALLOC ENABLE_UTF8PROC
+    )
+    foreach (_flag IN LISTS _chdb_lite_libs_on)
+        if (NOT DEFINED ${_flag})
+            set(${_flag} ON CACHE BOOL "Kept enabled by CHDB_LITE")
+        endif()
+    endforeach()
+
+    # RELR (-Wl,-z,pack-relative-relocs) would shrink .rela.dyn by ~13 MiB
+    # but injects a GLIBC_ABI_DT_RELR symbol version that auditwheel rejects
+    # for every manylinux policy (RELR needs glibc 2.36+). Keep classic relocs
+    # so the wheel passes auditwheel repair against manylinux2014.
+endif()
+
 option (ENABLE_XRAY "Enable LLVM XRay" ON)
 
 if (NOT ENABLE_XRAY)
@@ -171,7 +263,8 @@ if (OS_LINUX)
     # We should not export dynamic symbols, because:
     # - The main clickhouse binary does not use dlopen,
     #   and whatever is poisoning it by LD_PRELOAD should not link to our symbols.
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-export-dynamic -Wl,--gc-sections")
+    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-export-dynamic -Wl,--gc-sections -Wl,--icf=safe")
+    set (CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--icf=safe")
 endif ()
 
 if (OS_DARWIN)
@@ -255,7 +348,14 @@ if (NOT OS_DARWIN)
     # Asynchronous unwind tables are needed for Query Profiler.
     # They are already by default on some platforms but possibly not on all platforms.
     # Enable it explicitly.
-    set (COMPILER_FLAGS "${COMPILER_FLAGS} -fasynchronous-unwind-tables")
+    if (CHDB_LITE)
+        # chdb embedded build: query profiler is not used, drop async unwind tables
+        # to shrink .eh_frame by several MB. C++ exception handling still works
+        # via .eh_frame entries that compiler emits for functions that throw.
+        set (COMPILER_FLAGS "${COMPILER_FLAGS} -fno-asynchronous-unwind-tables")
+    else()
+        set (COMPILER_FLAGS "${COMPILER_FLAGS} -fasynchronous-unwind-tables")
+    endif()
 endif()
 
 # Reproducible builds.
@@ -308,6 +408,12 @@ endif()
 set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffp-contract=off")
 
 set (COMPILER_FLAGS "${COMPILER_FLAGS} -fPIC")
+
+if (CHDB_LITE)
+    # Place each function/datum in its own section so the linker's --gc-sections can
+    # remove unreferenced ones (otherwise dead code in the same TU as live code is kept).
+    set (COMPILER_FLAGS "${COMPILER_FLAGS} -ffunction-sections -fdata-sections")
+endif()
 
 set (DEBUG_INFO_FLAGS "-g")
 if (DISABLE_ALL_DEBUG_SYMBOLS)

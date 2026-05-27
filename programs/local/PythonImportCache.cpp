@@ -2,10 +2,11 @@
 #include "PythonImporter.h"
 
 #include <Common/Exception.h>
+#include <stack>
+
 #if USE_JEMALLOC
 #    include <Common/memory.h>
 #endif
-#include <stack>
 
 namespace DB
 {
@@ -65,6 +66,9 @@ void PythonImportCacheItem::LoadModule(PythonImportCache & cache)
 	{
 		if (IsRequired())
 		{
+#if USE_JEMALLOC
+			::Memory::MemoryCheckScope memory_check_scope;
+#endif
 			throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR,
 			    				"Required module {} failed to import, due to the following Python exception:\n {}", name, e.what());
 		}

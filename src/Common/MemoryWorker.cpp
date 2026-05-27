@@ -570,7 +570,9 @@ void MemoryWorker::purgeDirtyPagesThread()
     std::unique_lock purge_dirty_pages_lock(purge_dirty_pages_mutex);
 
     uint64_t default_dirty_decay_ms = dirty_decay_ms_mib.getValue();
-    LOG_INFO(log, "Default dirty pages decay period: {}ms", default_dirty_decay_ms);
+    /// chDB: suppress this startup INFO log to keep embedded usage quiet.
+    /// See https://github.com/chdb-io/chdb-core/issues/55
+    /// LOG_INFO(log, "Default dirty pages decay period: {}ms", default_dirty_decay_ms);
     while (true)
     {
         try

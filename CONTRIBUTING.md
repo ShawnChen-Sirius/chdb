@@ -65,18 +65,13 @@ that any documentation update is done in the same way was a code contribution.
 ```
 
 When working on documentation changes in your local machine, you can
-compile them using [tox] :
+compile them with:
 
 ```
-tox -e docs
+make docs
 ```
 
-and use Python's built-in web server for a preview in your web browser
-(`http://localhost:8000`):
-
-```
-python3 -m http.server --directory 'docs/_build/html'
-```
+A browser will open with the docs site.
 
 ## Code Contributions
 
@@ -125,26 +120,57 @@ conda activate chdb
    cd chdb
    ```
 
-4. You should run:
+### Build the project
 
-   ```
-   pip install -U pip setuptools -e .
-   ```
+chdb-core is a c++ library meant to be imported by python.
 
-   to be able to import the package under development in the Python REPL.
+To build the c++ library, you must have a few prerequisites, amongst others:
 
-   ```{todo} if you are not using pre-commit, please remove the following item:
-   ```
+- clang: Minimum version can be found in [`cmake/tools.cmake`](cmake/tools.cmake), search for `CLANG_MINIMUM_VERSION`
+- Rust: Version can be found in [`rust/vendor.sh`](rust/vendor.sh), search for `TOOLCHAIN`
+- make
+- cmake
+- ccache
+- patchelf
+- yasm
 
-5. Install [pre-commit]:
+And some python-specific ones:
 
-   ```
-   pip install pre-commit
-   pre-commit install
-   ```
+- pyenv with at least python 3.9 installed (`pyenv install 3.9`)
 
-   `chdb` comes with a lot of hooks configured to automatically help the
-   developer to check the code being written.
+Activate your venv & make sure you're running under 3.9:
+
+```
+pyenv shell 3.9
+pip install -r requirements-dev.txt
+```
+
+Create the library with:
+
+```
+pyenv shell 3.9
+
+make buildlib
+```
+
+This includes compiling clickhouse itself, which can take upwards of tens of minutes, depending on your processor. The library can be found in `buildlib/libchdb.so`. A patched version of the library meant to be imported by python is written under the `chdb` directory; for example in Linux that'll be `chdb/_chdb.abi3.so`.
+
+To actually use the library, build the wheel:
+
+```
+pyenv shell 3.9
+
+make wheel
+
+# install it locally
+pip install dist/chdb_core-*.whl
+```
+
+You can use `make test` to run all the python unittests:
+
+```
+make test
+```
 
 ### Implement your changes
 
@@ -170,14 +196,6 @@ conda activate chdb
 
    to record your changes in [git].
 
-   ```{todo} if you are not using pre-commit, please remove the following item:
-   ```
-
-   Please make sure to see the validation messages from [pre-commit] and fix
-   any eventual issues.
-   This should automatically use [flake8]/[black] to check/fix the code style
-   in a way that is compatible with the project.
-
    :::{important}
    Don't forget to add unit tests and documentation in case your
    contribution adds an additional feature and is not just a bugfix.
@@ -195,13 +213,8 @@ conda activate chdb
 5. Please check that your changes don't break any unit tests with:
 
    ```
-   tox
+   make test
    ```
-
-   (after having installed [tox] with `pip install tox` or `pipx`).
-
-   You can also use [tox] to run several other pre-configured tasks in the
-   repository. Try `tox -av` to see a list of the available checks.
 
 ### Submit your contribution
 
@@ -227,53 +240,28 @@ conda activate chdb
 The following tips can be used when facing problems to build or test the
 package:
 
-1. Make sure to fetch all the tags from the upstream [repository].
-   The command `git describe --abbrev=0 --tags` should return the version you
-   are expecting. If you are trying to run CI scripts in a fork repository,
-   make sure to push all the tags.
-   You can also try to remove all the egg files or the complete egg folder, i.e.,
-   `.eggs`, as well as the `*.egg-info` folders in the `src` folder or
-   potentially in the root of your project.
+- Make sure to fetch all the tags from the upstream [repository].
+  The command `git describe --abbrev=0 --tags` should return the version you
+  are expecting. If you are trying to run CI scripts in a fork repository,
+  make sure to push all the tags.
+  You can also try to remove all the egg files or the complete egg folder, i.e.,
+  `.eggs`, as well as the `*.egg-info` folders in the `src` folder or
+  potentially in the root of your project.
 
-2. Sometimes [tox] misses out when new dependencies are added, especially to
-   `setup.cfg` and `docs/requirements.txt`. If you find any problems with
-   missing dependencies when running a command with [tox], try to recreate the
-   `tox` environment using the `-r` flag. For example, instead of:
+- Make sure to have a reliable pyenv installation that uses the correct
+  Python version (e.g., 3.9+). When in doubt you can run:
 
-   ```
-   tox -e docs
-   ```
+  ```
+  pyenv --version
+  # OR
+  which python
+  # should point to .pyenv/shims/python
+  ```
 
-   Try running:
-
-   ```
-   tox -r -e docs
-   ```
-
-3. Make sure to have a reliable [tox] installation that uses the correct
-   Python version (e.g., 3.7+). When in doubt you can run:
-
-   ```
-   tox --version
-   # OR
-   which tox
-   ```
-
-   If you have trouble and are seeing weird errors upon running [tox], you can
-   also try to create a dedicated [virtual environment] with a [tox] binary
-   freshly installed. For example:
-
-   ```
-   virtualenv .venv
-   source .venv/bin/activate
-   .venv/bin/pip install tox
-   .venv/bin/tox -e all
-   ```
-
-4. [Pytest can drop you] in an interactive session in the case an error occurs.
-   In order to do that you need to pass a `--pdb` option (for example by
-   running `tox -- -k <NAME OF THE FALLING TEST> --pdb`).
-   You can also setup breakpoints manually instead of using the `--pdb` option.
+- [Pytest can drop you] in an interactive session in the case an error occurs.
+  In order to do that you need to pass a `--pdb` option (for example by
+  running `pytest -k <NAME OF THE FALLING TEST> --pdb`).
+  You can also setup breakpoints manually instead of using the `--pdb` option.
 
 ## Maintainer tasks
 
@@ -325,7 +313,6 @@ on [PyPI], the following steps can be used to release a new version for
 [miniconda]: https://docs.conda.io/en/latest/miniconda.html
 [myst]: https://myst-parser.readthedocs.io/en/latest/syntax/syntax.html
 [other kinds of contributions]: https://opensource.guide/how-to-contribute
-[pre-commit]: https://pre-commit.com/
 [pypi]: https://pypi.org/
 [pyscaffold's contributor's guide]: https://pyscaffold.org/en/stable/contributing.html
 [pytest can drop you]: https://docs.pytest.org/en/stable/usage.html#dropping-to-pdb-python-debugger-at-the-start-of-a-test

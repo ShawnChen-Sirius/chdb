@@ -335,44 +335,44 @@ chdb.query("SELECT b, sum(a) FROM Python(arrow_table) GROUP BY b ORDER BY b").sh
 <details>
 <summary><b>用户自定义函数（UDF）</b></summary>
 
+chDB 支持原生 Python UDF，在进程内直接运行，具备完整的类型安全。
+
 ```python
-from chdb.udf import chdb_udf
-from chdb import query
+import chdb
+from chdb.session import Session
+from chdb.sqltypes import INT64, STRING
 
-@chdb_udf()
-def sum_udf(lhs, rhs):
-    return int(lhs) + int(rhs)
+sess = Session()
 
-print(query("SELECT sum_udf(12, 22)"))
+# 使用 @chdb.func 装饰器
+@chdb.func([INT64, INT64], INT64)
+def add(a, b):
+    return a + b
+
+print(sess.query("SELECT add(12, 22)"))
+
+# 通过类型注解自动推断类型
+@chdb.func()
+def multiply(a: int, b: int) -> int:
+    return a * b
+
+print(sess.query("SELECT multiply(3, 7)"))
+
+# 使用 chdb.create_function 直接注册
+chdb.create_function("strlen", len, arg_types=[STRING], return_type=INT64)
+print(sess.query("SELECT strlen('hello')"))
+
+# 移除已注册的函数
+chdb.drop_function("strlen")
 ```
 
-关于 chDB Python UDF（用户自定义函数）装饰器的一些说明：
-1. 函数必须是无状态的。因此只支持 UDF，不支持 UDAF（用户自定义聚合函数）。
-2. 默认返回类型为 String。如需更改返回类型，可以将返回类型作为参数传入。
-    返回类型应为以下之一：https://clickhouse.com/docs/en/sql-reference/data-types
-3. 函数参数类型为 String。由于输入是 TabSeparated 格式，所有参数都是字符串。
-4. 函数会对每行输入调用一次。类似这样：
-    ```
-    def sum_udf(lhs, rhs):
-        return int(lhs) + int(rhs)
+主要特性：
+- **类型安全**：支持 `INT64`、`FLOAT64`、`STRING`、`BOOL`、`DATETIME64` 等，完整列表参见 [chdb.sqltypes](chdb/_chdb/_sqltypes.pyi)。
+- **类型推断**：从 Python 类型注解自动推断（`int`、`str`、`bool` 等）
+- **NULL 处理**：`on_null=NullHandling.SKIP`（默认）跳过函数调用并返回 NULL；`NullHandling.PASS` 将 `None` 传入函数。
+- **异常处理**：`on_error=ExceptionHandling.PROPAGATE`（默认）将异常抛给调用方；`ExceptionHandling.IGNORE` 对该行返回 NULL 并继续执行。
 
-    for line in sys.stdin:
-        args = line.strip().split('\t')
-        lhs = args[0]
-        rhs = args[1]
-        print(sum_udf(lhs, rhs))
-        sys.stdout.flush()
-    ```
-5. 函数必须是纯 Python 函数。所有用到的 Python 模块必须在函数内部导入。
-    ```
-    def func_use_json(arg):
-        import json
-        ...
-    ```
-6. 使用的 Python 解释器与运行脚本的解释器相同。通过 `sys.executable` 获取。
-
-另见: [test_udf.py](tests/test_udf.py)。
-
+参见：[test_func_udf.py](tests/test_func_udf.py)、[test_func_udf_types.py](tests/test_func_udf_types.py)。
 </details>
 
 <details>

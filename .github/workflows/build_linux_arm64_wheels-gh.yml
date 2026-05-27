@@ -388,6 +388,23 @@ jobs:
             pyenv shell --unset
           done
         continue-on-error: false
+      - name: Run benchmarks on Python 3.14 (pandas 2.x and 3.x)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.14
+          for PANDAS_CONSTRAINT in "pandas<3.0" "pandas>=3.0"; do
+            echo "=== Benchmarks with $PANDAS_CONSTRAINT ==="
+            python -m pip install dist/*.whl "$PANDAS_CONSTRAINT" --force-reinstall --no-cache-dir -q
+            for bench in tests/benchmarks/bench_*.py; do
+              echo "--- Running $bench ---"
+              python "$bench"
+            done
+            python -m pip uninstall -y chdb-core
+          done
+          pyenv shell --unset
+        continue-on-error: true
       - name: Test torch compatibility on Python 3.11
         run: |
           export PATH="$HOME/.pyenv/bin:$PATH"
@@ -422,6 +439,104 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
+      # -----------------------------------------------------------------------
+      # chdb-core-lite: slim variant build & smoke test (~50 MB wheel)
+      # chdb/build.sh's CHDB_LITE branch skips the libchdb.so link entirely —
+      # only _chdb.abi3.so is produced (lite is Python-only).
+      # -----------------------------------------------------------------------
+      - name: Build chdb-core-lite (_chdb.abi3.so only, skips libchdb.so)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 600
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          source ~/.cargo/env
+          pyenv shell 3.9
+          export CC=/usr/bin/clang
+          export CXX=/usr/bin/clang++
+          rm -rf buildlib
+          CHDB_LITE=1 bash ./chdb/build.sh
+        continue-on-error: false
+      - name: Build chdb-core-lite wheel
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          export CC=/usr/bin/clang
+          export CXX=/usr/bin/clang++
+          pyenv shell 3.9
+          CHDB_LITE=1 make wheel
+        continue-on-error: false
+      - name: Audit chdb-core-lite wheel
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          auditwheel -v repair -w dist/ --plat manylinux_2_17_aarch64 dist/chdb_core_lite-*linux_aarch64.whl
+          sudo rm -f dist/chdb_core_lite-*-linux_aarch64.whl
+          ls -lh dist
+        continue-on-error: false
+      - name: Verify chdb-core-lite wheel size < 50 MiB
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        run: |
+          set -e
+          WHEEL=$(ls dist/chdb_core_lite-*manylinux*.whl | head -1)
+          SIZE=$(wc -c < "$WHEEL")
+          MAX=52428800
+          MIB=$(awk "BEGIN{printf \"%.2f\", $SIZE/1048576}")
+          if [ "$SIZE" -ge "$MAX" ]; then
+            echo "ERROR: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), must be < 50 MiB (52,428,800 bytes)"
+            exit 1
+          fi
+          echo "OK: $(basename $WHEEL) is $SIZE bytes (${MIB} MiB), under 50 MiB"
+        continue-on-error: false
+      - name: Test chdb-core-lite wheel on Python 3.9 and 3.14
+        run: |
+          ulimit -c unlimited
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          for version in 3.9 3.14; do
+            echo "=============================================="
+            echo "Testing chdb-core-lite on Python $version"
+            echo "=============================================="
+            pyenv shell $version
+            # Clean any chdb-core left over from earlier steps before installing lite —
+            # both packages ship the same chdb/ module path; pip metadata would otherwise
+            # list both, and uninstalling lite later could leave a half-cleaned tree.
+            python -m pip uninstall -y chdb-core || true
+            python -m pip uninstall -y chdb-core-lite || true
+            python -m pip install dist/chdb_core_lite-*manylinux*.whl --force-reinstall
+            python -c "import chdb; res = chdb.query('select 1112222222,555', 'CSV'); print(f'Python $version: {res}')"
+            # Full test suite + lite-only tests (CHDB_LITE=1 unlocks tests/test_chdb_core_lite.py)
+            CHDB_LITE=1 make test
+            python -m pip uninstall -y chdb-core-lite
+            echo "=============================================="
+            echo "Tests PASSED on Python $version"
+            echo "=============================================="
+          done
+          pyenv shell --unset
+        continue-on-error: false
+      - name: Test chdb-core-lite DataStore tests against upstream chdb (latest tag)
+        if: env.EFFECTIVE_DEBUG_MODE != 'true'
+        timeout-minutes: 60
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.11
+          python -m pip uninstall -y chdb-core || true
+          python -m pip uninstall -y chdb-core-lite || true
+          python -m pip install dist/chdb_core_lite-*manylinux*.whl --force-reinstall
+          CHDB_LITE=1 PYTHON=$(pyenv which python) bash ./chdb/test_chdb_datastore.sh
+          python -m pip uninstall -y chdb-core-lite
+          pyenv shell --unset
+        continue-on-error: false
+      - name: Restore pyproject.toml (chdb-core-lite build mutates it in place)
+        if: always()
+        run: |
+          git checkout -- pyproject.toml
       - name: Check and upload core files if present
         if: always()
         run: |
@@ -452,7 +567,13 @@ jobs:
       - name: Upload wheels to release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          gh release upload ${{ github.ref_name }} dist/*.whl --clobber
+          gh release upload ${{ github.ref_name }} dist/chdb_core-*.whl --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Upload chdb-core-lite wheel to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release upload ${{ github.ref_name }} dist/chdb_core_lite-*.whl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - name: Packege libchdb.so
@@ -504,7 +625,17 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.9
-          python -m twine upload dist/*.whl
+          python -m twine upload dist/chdb_core-*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      - name: Upload chdb-core-lite to pypi
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export PATH="$HOME/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv shell 3.9
+          python -m twine upload dist/chdb_core_lite-*.whl
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}

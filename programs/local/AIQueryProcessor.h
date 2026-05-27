@@ -2,10 +2,11 @@
 
 #include "chdb.h"
 #include <Client/AI/AIConfiguration.h>
-#include <Client/AI/AISQLGenerator.h>
 
 #include <memory>
 #include <string>
+
+namespace DB { class AISQLGenerator; }
 
 /// AI query processor that delegates to AISQLGenerator.
 class AIQueryProcessor

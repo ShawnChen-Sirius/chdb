@@ -1,5 +1,6 @@
 from typing import Optional, Any
 import sys
+from decimal import Decimal
 from urllib.parse import parse_qsl
 from chdb import _chdb
 from chdb.progress_display import (
@@ -19,8 +20,10 @@ except ImportError as e:
 
 
 _arrow_format = set({"arrowtable"})
+_df_format = set({"dataframe", "datastore"})
 _process_result_format_funs = {
     "arrowtable": lambda x: to_arrowTable(x),
+    "datastore": lambda x: to_datastore(x),
 }
 
 
@@ -72,6 +75,22 @@ def to_arrowTable(res):
 
     memview = res.get_memview()
     return pa.RecordBatchFileReader(memview.view()).read_all()
+
+
+def to_datastore(df):
+    """Wrap a pandas DataFrame in a chdb DataStore.
+
+    Requires the ``chdb`` pip package (providing the DataStore API) to be
+    installed alongside ``chdb-core``.
+    """
+    try:
+        from chdb.datastore import DataStore
+    except ImportError as e:
+        raise ImportError(
+            'DataStore output format requires the chdb package. '
+            'Install it via "pip install chdb".'
+        ) from e
+    return DataStore(df)
 
 
 class StreamingResult:
@@ -555,7 +574,7 @@ class Connection:
         progress_callback = self._setup_auto_progress_callback()
 
         try:
-            if lower_output_format == "dataframe":
+            if lower_output_format in _df_format:
                 result = self._conn.query_df(query, params=params or {})
             else:
                 result = self._conn.query(query, format, params=params or {})
@@ -657,6 +676,8 @@ class Connection:
         result_func = _process_result_format_funs.get(lower_output_format, lambda x: x)
         if lower_output_format in _arrow_format:
             format = "Arrow"
+        if lower_output_format == "datastore":
+            format = "DataFrame"
 
         progress_callback = self._setup_auto_progress_callback()
         try:
@@ -665,7 +686,7 @@ class Connection:
             self._cleanup_auto_progress_callback(progress_callback)
             raise
 
-        is_dataframe = lower_output_format == "dataframe"
+        is_dataframe = lower_output_format in _df_format
         stream_result = StreamingResult(
             c_stream_result,
             self._conn,
@@ -756,11 +777,37 @@ class Connection:
 
 
 class Cursor:
+    # Format settings the cursor enables on its underlying connection so that
+    # JSONCompactEachRowWithNamesAndTypes preserves exact values rather than
+    # silently lossy-rounding them. Without these, ClickHouse emits:
+    #   * Float NaN / +Inf / -Inf as JSON null (indistinguishable from SQL NULL)
+    #   * Decimal(P, S) as an unquoted JSON number (lossy double precision)
+    #   * Float64 as an unquoted JSON number (lossy on large magnitudes)
+    # With these set to 1, the values come through as JSON strings carrying
+    # the exact textual representation, which Python can parse back losslessly.
+    _CURSOR_FORMAT_SETTINGS = (
+        "SET output_format_json_quote_denormals = 1, "
+        "output_format_json_quote_decimals = 1, "
+        "output_format_json_quote_64bit_floats = 1"
+    )
+
     def __init__(self, connection):
         self._conn = connection
         self._cursor = self._conn.cursor()
         self._current_table: Optional[pa.Table] = None
         self._current_row: int = 0
+        # Apply lossless-output settings to the underlying connection. The
+        # cursor uses JSONCompactEachRowWithNamesAndTypes, which by default
+        # collapses NaN/Inf to null and truncates Decimal precision through
+        # double. The SET keeps the textual representation exact so that the
+        # Python conversion below sees real values, not lossy substitutes.
+        try:
+            self._cursor.execute(self._CURSOR_FORMAT_SETTINGS)
+        except Exception:
+            # Older engines may not know one of these settings; fall back to
+            # leaving them at the engine default rather than refusing to
+            # construct the cursor. Tests cover the modern path.
+            pass
 
     def execute(self, query: str) -> None:
         """Execute a SQL query and prepare results for fetching.
@@ -854,17 +901,33 @@ class Cursor:
                         converted_row.append(None)
                         continue
 
+                    # Strip Nullable(...) wrapper so the inner type is matched
+                    # by the conversion branches below. Without this, a column
+                    # typed Nullable(Float64) would fall through to str(val).
+                    inner_type = type_info
+                    if inner_type.startswith("Nullable(") and inner_type.endswith(")"):
+                        inner_type = inner_type[len("Nullable("):-1]
+
                     # Basic type conversion
                     try:
-                        if type_info.startswith("Int") or type_info.startswith("UInt"):
+                        if inner_type.startswith("Int") or inner_type.startswith("UInt"):
                             converted_row.append(int(val))
-                        elif type_info.startswith("Float"):
+                        elif inner_type.startswith("Float"):
+                            # With output_format_json_quote_denormals=1, NaN /
+                            # Inf / -Inf arrive as the strings "nan" / "inf" /
+                            # "-inf"; float() accepts those directly.
                             converted_row.append(float(val))
-                        elif type_info == "Bool":
+                        elif inner_type.startswith("Decimal"):
+                            # With output_format_json_quote_decimals=1, the
+                            # value is the exact textual representation, so
+                            # Decimal() round-trips losslessly. Without the
+                            # SET it would arrive as a lossy double.
+                            converted_row.append(Decimal(str(val)))
+                        elif inner_type == "Bool":
                             converted_row.append(bool(val))
-                        elif type_info == "String" or type_info == "FixedString":
+                        elif inner_type == "String" or inner_type == "FixedString":
                             converted_row.append(str(val))
-                        elif type_info.startswith("DateTime"):
+                        elif inner_type.startswith("DateTime"):
                             from datetime import datetime
 
                             # Check if the value is numeric (timestamp)
@@ -883,7 +946,7 @@ class Cursor:
                                     converted_row.append(
                                         datetime.strptime(val_str, "%Y-%m-%d %H:%M:%S")
                                     )
-                        elif type_info.startswith("Date"):
+                        elif inner_type.startswith("Date"):
                             from datetime import date, datetime
 
                             # Check if the value is numeric (days since epoch)

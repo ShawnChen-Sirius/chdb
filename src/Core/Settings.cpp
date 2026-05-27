@@ -7770,7 +7770,16 @@ Sample rows in pandas to automatically determine the data types. When set to 0, 
 The application name appended to 'chDB' when connecting to remote servers via remote() or remoteSecure() table functions.
 If empty, query_log shows 'chDB'. If set to 'my-app', query_log shows 'chDB my-app'.
 )", EXPERIMENTAL) \
-\
+    DECLARE(Bool, allow_python_table_function, true, R"(
+Enables or disables the [Python](../../sql-reference/table-functions/python.md) table function. Set to 0 when you don't want queries to be able to reference variables declared in Python.
+
+Possible values:
+- 1 - Python table function enabled (default).
+- 0 - Python table function disabled.
+
+Once disabled, it cannot be re-enabled for the same session.
+)", 0) \
+    \
     /* ####################################################### */ \
     /* ############ END OF EXPERIMENTAL FEATURES ############# */ \
     /* ####################################################### */ \

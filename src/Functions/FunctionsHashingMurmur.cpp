@@ -6,6 +6,15 @@
 /// to better parallelize the build procedure and avoid MSan build failure
 /// due to excessive resource consumption.
 
+#if defined(CHDB_LITE) && CHDB_LITE
+/// chdb-core-lite: all MurmurHash variants are niche; drop them and rely on
+/// linker --gc-sections to remove the template instantiations. Users who need
+/// a fast 64-bit hash can use cityHash64 or xxHash64.
+#define CHDB_LITE_HASH(call) (void)0
+#else
+#define CHDB_LITE_HASH(call) call
+#endif
+
 namespace DB
 {
 
@@ -38,7 +47,7 @@ This affects for example integer types of different size, named and unnamed `Tup
     FunctionDocumentation::IntroducedIn murmurHash2_32_introduced_in = {18, 5};
     FunctionDocumentation::Category murmurHash2_32_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation murmurHash2_32_documentation = {murmurHash2_32_description, murmurHash2_32_syntax, murmurHash2_32_arguments, {}, murmurHash2_32_returned_value, murmurHash2_32_examples, murmurHash2_32_introduced_in, murmurHash2_32_category};
-    factory.registerFunction<FunctionMurmurHash2_32>(murmurHash2_32_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionMurmurHash2_32>(murmurHash2_32_documentation));
 
     FunctionDocumentation::Description murmurHash2_64_description = R"(
 Computes the [MurmurHash2](https://github.com/aappleby/smhasher) hash of the input value.
@@ -67,7 +76,7 @@ This affects for example integer types of different size, named and unnamed `Tup
     FunctionDocumentation::IntroducedIn murmurHash2_64_introduced_in = {18, 10};
     FunctionDocumentation::Category murmurHash2_64_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation murmurHash2_64_documentation = {murmurHash2_64_description, murmurHash2_64_syntax, murmurHash2_64_arguments, {}, murmurHash2_64_returned_value, murmurHash2_64_examples, murmurHash2_64_introduced_in, murmurHash2_64_category};
-    factory.registerFunction<FunctionMurmurHash2_64>(murmurHash2_64_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionMurmurHash2_64>(murmurHash2_64_documentation));
 
     FunctionDocumentation::Description murmurHash3_32_description = R"(
 Produces a [MurmurHash3](https://github.com/aappleby/smhasher) hash value.
@@ -96,7 +105,7 @@ This affects for example integer types of different size, named and unnamed `Tup
     FunctionDocumentation::IntroducedIn murmurHash3_32_introduced_in = {18, 10};
     FunctionDocumentation::Category murmurHash3_32_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation murmurHash3_32_documentation = {murmurHash3_32_description, murmurHash3_32_syntax, murmurHash3_32_arguments, {}, murmurHash3_32_returned_value, murmurHash3_32_examples, murmurHash3_32_introduced_in, murmurHash3_32_category};
-    factory.registerFunction<FunctionMurmurHash3_32>(murmurHash3_32_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionMurmurHash3_32>(murmurHash3_32_documentation));
 
     FunctionDocumentation::Description murmurHash3_64_description = R"(
 Computes the [MurmurHash3](https://github.com/aappleby/smhasher) hash of the input value.
@@ -125,7 +134,7 @@ This affects for example integer types of different size, named and unnamed `Tup
     FunctionDocumentation::IntroducedIn murmurHash3_64_introduced_in = {18, 10};
     FunctionDocumentation::Category murmurHash3_64_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation murmurHash3_64_documentation = {murmurHash3_64_description, murmurHash3_64_syntax, murmurHash3_64_arguments, {}, murmurHash3_64_returned_value, murmurHash3_64_examples, murmurHash3_64_introduced_in, murmurHash3_64_category};
-    factory.registerFunction<FunctionMurmurHash3_64>(murmurHash3_64_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionMurmurHash3_64>(murmurHash3_64_documentation));
 
     FunctionDocumentation::Description murmurHash3_128_description = R"(
 Computes the 128-bit [MurmurHash3](https://github.com/aappleby/smhasher) hash of the input value.
@@ -149,7 +158,7 @@ Computes the 128-bit [MurmurHash3](https://github.com/aappleby/smhasher) hash of
     FunctionDocumentation::IntroducedIn murmurHash3_128_introduced_in = {18, 10};
     FunctionDocumentation::Category murmurHash3_128_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation murmurHash3_128_documentation = {murmurHash3_128_description, murmurHash3_128_syntax, murmurHash3_128_arguments, {}, murmurHash3_128_returned_value, murmurHash3_128_examples, murmurHash3_128_introduced_in, murmurHash3_128_category};
-    factory.registerFunction<FunctionMurmurHash3_128>(murmurHash3_128_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionMurmurHash3_128>(murmurHash3_128_documentation));
 
     FunctionDocumentation::Description gccMurmurHash_description = R"(
 Computes the 64-bit [MurmurHash2](https://github.com/aappleby/smhasher) hash of the input value using the same seed as used by [GCC](https://github.com/gcc-mirror/gcc/blob/41d6b10e96a1de98e90a7c0378437c3255814b16/libstdc%2B%2B-v3/include/bits/functional_hash.h#L191).
@@ -179,7 +188,7 @@ SELECT
     FunctionDocumentation::IntroducedIn gccMurmurHash_introduced_in = {20, 1};
     FunctionDocumentation::Category gccMurmurHash_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation gccMurmurHash_documentation = {gccMurmurHash_description, gccMurmurHash_syntax, gccMurmurHash_arguments, {}, gccMurmurHash_returned_value, gccMurmurHash_examples, gccMurmurHash_introduced_in, gccMurmurHash_category};
-    factory.registerFunction<FunctionGccMurmurHash>(gccMurmurHash_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionGccMurmurHash>(gccMurmurHash_documentation));
 
     FunctionDocumentation::Description kafkaMurmurHash_description = R"(
 Calculates the 32-bit [MurmurHash2](https://github.com/aappleby/smhasher) hash of the input value using the same seed as used by [Kafka](https://github.com/apache/kafka/blob/461c5cfe056db0951d9b74f5adc45973670404d7/clients/src/main/java/org/apache/kafka/common/utils/Utils.java#L482) and without the highest bit to be compatible with [Default Partitioner](https://github.com/apache/kafka/blob/139f7709bd3f5926901a21e55043388728ccca78/clients/src/main/java/org/apache/kafka/clients/producer/internals/BuiltInPartitioner.java#L328).
@@ -207,6 +216,6 @@ SELECT
     FunctionDocumentation::IntroducedIn kafkaMurmurHash_introduced_in = {23, 4};
     FunctionDocumentation::Category kafkaMurmurHash_category = FunctionDocumentation::Category::Hash;
     FunctionDocumentation kafkaMurmurHash_documentation = {kafkaMurmurHash_description, kafkaMurmurHash_syntax, kafkaMurmurHash_arguments, {}, kafkaMurmurHash_returned_value, kafkaMurmurHash_examples, kafkaMurmurHash_introduced_in, kafkaMurmurHash_category};
-    factory.registerFunction<FunctionKafkaMurmurHash>(kafkaMurmurHash_documentation);
+    CHDB_LITE_HASH(factory.registerFunction<FunctionKafkaMurmurHash>(kafkaMurmurHash_documentation));
 }
 }
