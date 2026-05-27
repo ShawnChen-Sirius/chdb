@@ -569,6 +569,7 @@ jobs:
           ls -lh macos-arm64-debuginfo.tar.gz
       - name: Upload debug symbols to release
         if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
         run: |
           gh release upload ${{ github.ref_name }} macos-arm64-debuginfo.tar.gz --clobber
         env:
