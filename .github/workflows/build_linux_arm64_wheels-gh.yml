@@ -599,6 +599,25 @@ jobs:
           gh release upload ${{ github.ref_name }} linux-aarch64-libchdb-static.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Verify debug symbols are usable
+        run: |
+          ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
+          verify() {
+            local so=$1 symbol=$2 debug=$3
+            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
+            [ -f "$debug" ] || { echo "FAIL: missing $debug"; exit 1; }
+            local addr=$(nm -D --defined-only "$so" | awk -v s="$symbol" '$3 == s {print $1; exit}')
+            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
+            local out=$("$ADDR2LINE" -fe "$debug" "0x$addr")
+            echo "$debug @ 0x$addr -> $out"
+            echo "$out" | grep -q "$symbol" || { echo "FAIL: symbol resolution returned '$out'"; exit 1; }
+          }
+          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.debug
+          if [ -f libchdb.so ]; then
+            verify libchdb.so query_stable libchdb.so.debug
+          else
+            echo "libchdb.so not present, skipping (lite build?)"
+          fi
       - name: Package debug symbols
         run: |
           ls *.debug
