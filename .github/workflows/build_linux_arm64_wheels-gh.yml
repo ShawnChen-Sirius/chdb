@@ -439,24 +439,10 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
-      # -----------------------------------------------------------------------
-      # Verify+package debug symbols BEFORE the chdb-core-lite build below.
-      # The lite build re-runs chdb/build.sh which overwrites chdb/_chdb.abi3.so
-      # in place; running verify after that would compare lite binary against
-      # non-lite .debug and report a false UUID mismatch.
-      # -----------------------------------------------------------------------
+      # Verify+package debug must run before the lite build (overwrites _chdb.abi3.so).
       - name: Verify debug symbols are usable
         run: |
           ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
-          # Two layers of check:
-          # 1. Build-ID match: linker-generated SHA1 stored in .note.gnu.build-id
-          #    is preserved by objcopy --only-keep-debug, and gdb/lldb match the
-          #    .debug to its .so via this ID. Mismatch means wrong-pairing (e.g.
-          #    a lite-build .debug crept in on top of a non-lite .so).
-          # 2. addr2line resolves PC → (function, source:line). RelWithDebInfo
-          #    inlining can substitute a neighbouring function name at the PC,
-          #    so we don't require name equality - only that DWARF answers with
-          #    a non-"??" function and a non-"??:0" source location.
           verify() {
             local so=$1 symbol=$2 debug=$3
             [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }

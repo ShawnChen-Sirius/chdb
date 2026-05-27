@@ -427,19 +427,9 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
-      # -----------------------------------------------------------------------
-      # Verify+package debug symbols BEFORE the chdb-core-lite swap below.
-      # "Swap in chdb-core-lite .abi3.so" replaces chdb/_chdb.abi3.so with the
-      # lite binary; running verify after that would compare lite binary against
-      # non-lite .dSYM and report a false UUID mismatch.
-      # -----------------------------------------------------------------------
+      # Verify+package debug must run before the lite swap (overwrites _chdb.abi3.so).
       - name: Verify debug symbols are usable
         run: |
-          # UUID match between binary and dSYM is the strict check (debugger
-          # pairs them by UUID). For symbol resolution we don't require atos to
-          # report our exact lookup symbol back — RelWithDebInfo inlining may
-          # merge neighbouring functions at the same PC range — only that atos
-          # returns a "(file:line)" annotation indicating DWARF lookup worked.
           verify() {
             local so=$1 symbol=$2 dsym=$3
             [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
