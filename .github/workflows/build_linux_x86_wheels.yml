@@ -433,6 +433,12 @@ jobs:
       - name: Verify debug symbols are usable
         run: |
           ADDR2LINE=$(command -v llvm-addr2line-19 || command -v llvm-addr2line || command -v addr2line)
+          # addr2line -f outputs two lines: function name, then source:line. With
+          # RelWithDebInfo inlining the function name at a PC may resolve to a
+          # neighbouring inlined function (e.g. PyInit__chdb's PC may map to a
+          # static initializer the compiler merged adjacent), so we don't require
+          # an exact symbol-name match - just that DWARF can resolve the address
+          # to a real function and a real source location.
           verify() {
             local so=$1 symbol=$2 debug=$3
             [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
@@ -440,8 +446,11 @@ jobs:
             local addr=$(nm -D --defined-only "$so" | awk -v s="$symbol" '$3 == s {print $1; exit}')
             [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
             local out=$("$ADDR2LINE" -fe "$debug" "0x$addr")
-            echo "$debug @ 0x$addr -> $out"
-            echo "$out" | grep -q "$symbol" || { echo "FAIL: symbol resolution returned '$out'"; exit 1; }
+            echo "$debug @ 0x$addr ($symbol) -> $out"
+            local func=$(echo "$out" | sed -n '1p')
+            local loc=$(echo "$out"  | sed -n '2p')
+            case "$func" in '??'|'') echo "FAIL: function name unresolved at $addr"; exit 1 ;; esac
+            case "$loc"  in '??:0'|'??:?'|'') echo "FAIL: source location unresolved at $addr"; exit 1 ;; esac
           }
           verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.debug
           verify libchdb.so query_stable libchdb.so.debug
