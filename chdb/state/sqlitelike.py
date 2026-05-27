@@ -20,8 +20,10 @@ except ImportError as e:
 
 
 _arrow_format = set({"arrowtable"})
+_df_format = set({"dataframe", "datastore"})
 _process_result_format_funs = {
     "arrowtable": lambda x: to_arrowTable(x),
+    "datastore": lambda x: to_datastore(x),
 }
 
 
@@ -73,6 +75,22 @@ def to_arrowTable(res):
 
     memview = res.get_memview()
     return pa.RecordBatchFileReader(memview.view()).read_all()
+
+
+def to_datastore(df):
+    """Wrap a pandas DataFrame in a chdb DataStore.
+
+    Requires the ``chdb`` pip package (providing the DataStore API) to be
+    installed alongside ``chdb-core``.
+    """
+    try:
+        from chdb.datastore import DataStore
+    except ImportError as e:
+        raise ImportError(
+            'DataStore output format requires the chdb package. '
+            'Install it via "pip install chdb".'
+        ) from e
+    return DataStore(df)
 
 
 class StreamingResult:
@@ -556,7 +574,7 @@ class Connection:
         progress_callback = self._setup_auto_progress_callback()
 
         try:
-            if lower_output_format == "dataframe":
+            if lower_output_format in _df_format:
                 result = self._conn.query_df(query, params=params or {})
             else:
                 result = self._conn.query(query, format, params=params or {})
@@ -658,6 +676,8 @@ class Connection:
         result_func = _process_result_format_funs.get(lower_output_format, lambda x: x)
         if lower_output_format in _arrow_format:
             format = "Arrow"
+        if lower_output_format == "datastore":
+            format = "DataFrame"
 
         progress_callback = self._setup_auto_progress_callback()
         try:
@@ -666,7 +686,7 @@ class Connection:
             self._cleanup_auto_progress_callback(progress_callback)
             raise
 
-        is_dataframe = lower_output_format == "dataframe"
+        is_dataframe = lower_output_format in _df_format
         stream_result = StreamingResult(
             c_stream_result,
             self._conn,

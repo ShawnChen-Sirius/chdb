@@ -12,10 +12,13 @@ Validates that:
 """
 
 import io
+import os
 import unittest
 
 import pyarrow as pa
 import chdb
+
+_LITE = os.environ.get("CHDB_LITE") == "1"
 
 
 def _query_arrow(
@@ -211,6 +214,7 @@ class TestArrowParallelEncoding(unittest.TestCase):
         tbl = self._assert_parallel_matches_serial(sql)
         self.assertEqual(tbl.num_rows, 20000)
 
+    @unittest.skipIf(_LITE, "toDecimal128 not registered in chdb-core-lite")
     def test_decimal_types_match_serial(self):
         sql = (
             "SELECT number AS k, "

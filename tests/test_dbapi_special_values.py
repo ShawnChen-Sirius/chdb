@@ -21,10 +21,13 @@ branch (plus Nullable() stripping) in the cursor's row decoder.
 
 import datetime as _dt
 import math
+import os
 import unittest
 from decimal import Decimal
 
 from chdb import dbapi
+
+_LITE = os.environ.get("CHDB_LITE") == "1"
 
 
 class TestDBAPISpecialValues(unittest.TestCase):
@@ -141,6 +144,7 @@ class TestDBAPISpecialValues(unittest.TestCase):
         self.assertIsInstance(cell, Decimal)
         self.assertEqual(cell, Decimal("1234567890.12345"))
 
+    @unittest.skipIf(_LITE, "Decimal(P>=20) routes through Decimal128, not in chdb-core-lite")
     def test_nullable_decimal(self):
         """Nullable(Decimal(P, S)) must yield Decimal for values and None for NULL."""
         exact = "1234567890123456789012345678.0123456789"
