@@ -2,7 +2,7 @@
 
 set -e
 
-build_type=${1:-Release}
+build_type=${1:-RelWithDebInfo}
 
 MY_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -138,8 +138,12 @@ fi
 if [ ${build_type} == "Debug" ]; then
     echo -e "\nDebug build, skip strip"
 else
-    echo -e "\nStrip the libchdb_minimal.a:"
-    ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note libchdb_minimal.a
+    echo -e "\nStrip debug info from libchdb_minimal.a:"
+    if [ "$(uname)" == "Darwin" ]; then
+        ${STRIP} -S libchdb_minimal.a
+    else
+        ${STRIP} --strip-debug --remove-section=.comment --remove-section=.note libchdb_minimal.a
+    fi
 fi
 
 

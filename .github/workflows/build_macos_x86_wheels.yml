@@ -131,7 +131,9 @@ jobs:
           name: macos-x86_64-build-artifacts
           path: |
             ./libchdb.so
+            ./libchdb.so.dSYM
             ./libchdb.a
+            ./_chdb.abi3.so.dSYM
             ./chdb/_chdb.abi3.so
             ./chdb/libpybind11nonlimitedapi_stubs.dylib
             ./chdb/libpybind11nonlimitedapi_chdb_3.9.dylib
@@ -268,6 +270,8 @@ jobs:
           for v in 9 10 11 12 13 14; do
             mv ./artifacts/chdb/libpybind11nonlimitedapi_chdb_3.${v}.dylib ./chdb/
           done
+          cp -a ./artifacts/libchdb.so.dSYM ./
+          cp -a ./artifacts/_chdb.abi3.so.dSYM ./
           ls -lh ./libchdb.so
           ls -lh ./chdb/*.so ./chdb/*.dylib
       - name: Sign macOS binaries
@@ -423,6 +427,32 @@ jobs:
           jupyter nbconvert --to notebook --execute tests/test_data_insertion.ipynb --output test_data_insertion_output.ipynb
           pyenv shell --unset
         continue-on-error: false
+      # Verify+package debug must run before the lite swap (overwrites _chdb.abi3.so).
+      - name: Verify debug symbols are usable
+        run: |
+          verify() {
+            local so=$1 symbol=$2 dsym=$3
+            [ -f "$so" ] || { echo "FAIL: missing $so"; exit 1; }
+            [ -d "$dsym" ] || { echo "FAIL: missing $dsym"; exit 1; }
+            local bin_uuid=$(dwarfdump --uuid "$so" | awk '{print $2}')
+            local dsym_uuid=$(dwarfdump --uuid "$dsym" | awk '{print $2}')
+            [ -n "$bin_uuid" ] && [ -n "$dsym_uuid" ] || { echo "FAIL: empty UUID (bin='$bin_uuid' dsym='$dsym_uuid')"; exit 1; }
+            [ "$bin_uuid" = "$dsym_uuid" ] || { echo "FAIL: UUID mismatch $bin_uuid vs $dsym_uuid"; exit 1; }
+            echo "$so UUID matches $dsym: $bin_uuid"
+            local addr=$(nm -gU "$so" | awk -v s="_$symbol" '$3 == s {print "0x" $1; exit}')
+            [ -n "$addr" ] || { echo "FAIL: $symbol not exported in $so"; exit 1; }
+            local dwarf="$dsym/Contents/Resources/DWARF/$(basename "$so")"
+            local resolved=$(atos -o "$dwarf" "$addr")
+            echo "atos $dwarf $addr ($symbol) -> $resolved"
+            echo "$resolved" | grep -qE ' \([^()]*:[0-9]+\)$' || { echo "FAIL: atos did not resolve to (file:line) for $addr"; exit 1; }
+          }
+          verify chdb/_chdb.abi3.so PyInit__chdb _chdb.abi3.so.dSYM
+          verify libchdb.so query_stable libchdb.so.dSYM
+      - name: Package debug symbols
+        run: |
+          ls *.dSYM
+          tar -czvf macos-x86_64-debuginfo.tar.gz *.dSYM
+          ls -lh macos-x86_64-debuginfo.tar.gz
       # -----------------------------------------------------------------------
       # chdb-core-lite: download the lite .abi3.so artifact, swap it in, build
       # & test the slim variant wheel. setup.py rewrites pyproject.toml's name
@@ -443,7 +473,7 @@ jobs:
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           pyenv shell 3.9
-          rm -rf dist build chdb.egg-info
+          rm -rf build chdb.egg-info
           CHDB_LITE=1 make wheel
           python -m wheel tags --platform-tag=macosx_10_15_x86_64 --remove dist/chdb_core_lite-*.whl
           ls -lh dist/
@@ -558,6 +588,13 @@ jobs:
           gh release upload ${{ github.ref_name }} macos-x86_64-libchdb-static.tar.gz --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Upload debug symbols to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        run: |
+          gh release upload ${{ github.ref_name }} macos-x86_64-debuginfo.tar.gz --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: chdb-artifacts-macos-x86_64
@@ -565,6 +602,7 @@ jobs:
             ./dist/*.whl
             ./macos-x86_64-libchdb.tar.gz
             ./macos-x86_64-libchdb-static.tar.gz
+            ./macos-x86_64-debuginfo.tar.gz
           overwrite: true
       - name: Upload pypi
         if: startsWith(github.ref, 'refs/tags/v')

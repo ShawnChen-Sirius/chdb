@@ -2,8 +2,13 @@
 
 set -e
 
-# default to build Release
-build_type=${1:-Release}
+# default to RelWithDebInfo to preserve debug symbols for crash analysis
+build_type=${1:-RelWithDebInfo}
+
+# chdb-core-lite has a 50 MiB wheel budget; -g would bloat past it.
+if [ "${CHDB_LITE}" = "1" ] && [ "${build_type}" = "RelWithDebInfo" ]; then
+    build_type="Release"
+fi
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -282,26 +287,48 @@ LIBCHDB_DIR=${BUILD_DIR}/
 PYCHDB=${LIBCHDB_DIR}/${CHDB_PY_MODULE}
 LIBCHDB=${LIBCHDB_DIR}/${LIBCHDB_SO}
 
-if [ ${build_type} == "Debug" ] || [ ${build_type} == "RelWithDebInfo" ]; then
-    echo -e "\n${build_type} build, skip strip"
-else
-    echo -e "\nStrip the binary:"
-    # macOS MachO format requires different strip options than Linux ELF
+if [ ${build_type} == "Debug" ]; then
+    echo -e "\nDebug build, skip strip and debug symbol extraction"
+elif [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
+    echo -e "\nExtracting debug symbols before strip..."
     if [ "$(uname)" == "Darwin" ]; then
-        # On macOS, use -x (remove local symbols) for both llvm-strip and native strip
-        ${STRIP} -x ${PYCHDB}
-        [ "${CHDB_LITE}" != "1" ] && ${STRIP} -x ${LIBCHDB}
-    elif echo "${STRIP}" | grep -q "llvm-strip"; then
-        # Linux with llvm-strip
-        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
-        [ "${CHDB_LITE}" != "1" ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+        dsymutil ${PYCHDB} -o ${PYCHDB}.dSYM
+        dsymutil ${LIBCHDB} -o ${LIBCHDB}.dSYM
+        echo "Debug symbols extracted:"
+        du -sh ${PYCHDB}.dSYM ${LIBCHDB}.dSYM
     else
-        # Linux GNU strip
+        OBJCOPY=$(which llvm-objcopy-19 2>/dev/null || which llvm-objcopy 2>/dev/null || which objcopy 2>/dev/null)
+        if [ -n "${OBJCOPY}" ]; then
+            ${OBJCOPY} --only-keep-debug ${PYCHDB} ${PYCHDB}.debug
+            ${OBJCOPY} --only-keep-debug ${LIBCHDB} ${LIBCHDB}.debug
+            echo "Debug symbols extracted:"
+            ls -lh ${PYCHDB}.debug ${LIBCHDB}.debug
+        else
+            echo "ERROR: objcopy not found, cannot extract debug symbols"
+            exit 1
+        fi
+    fi
+
+    echo -e "\nStrip the binary:"
+    if [ "$(uname)" == "Darwin" ]; then
+        ${STRIP} -S -x ${PYCHDB}
+        ${STRIP} -S -x ${LIBCHDB}
+    else
+        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
+        ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
+        ${OBJCOPY} --add-gnu-debuglink=${PYCHDB}.debug ${PYCHDB}
+        ${OBJCOPY} --add-gnu-debuglink=${LIBCHDB}.debug ${LIBCHDB}
+    fi
+else
+    echo -e "\n${build_type} build, strip without debug symbol extraction"
+    if [ "$(uname)" == "Darwin" ]; then
+        ${STRIP} -S -x ${PYCHDB}
+        [ "${CHDB_LITE}" != "1" ] && ${STRIP} -S -x ${LIBCHDB}
+    else
         ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${PYCHDB}
         [ "${CHDB_LITE}" != "1" ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${LIBCHDB}
     fi
 fi
-echo -e "\nStripped the binary:"
 
 echo -e "\nPYCHDB: ${PYCHDB}"
 ls -lh ${PYCHDB}
@@ -322,6 +349,16 @@ fi
 rm -f ${CHDB_DIR}/*.so
 cp -a ${PYCHDB} ${CHDB_DIR}/${CHDB_PY_MODULE}
 [ "${CHDB_LITE}" != "1" ] && cp -a ${LIBCHDB} ${PROJ_DIR}/${LIBCHDB_SO}
+
+if [ ${build_type} == "RelWithDebInfo" ] && [ "${CHDB_LITE}" != "1" ]; then
+    if [ "$(uname)" == "Darwin" ]; then
+        cp -a ${PYCHDB}.dSYM ${PROJ_DIR}/${CHDB_PY_MODULE}.dSYM
+        cp -a ${LIBCHDB}.dSYM ${PROJ_DIR}/${LIBCHDB_SO}.dSYM
+    else
+        cp -a ${PYCHDB}.debug ${PROJ_DIR}/${CHDB_PY_MODULE}.debug
+        cp -a ${LIBCHDB}.debug ${PROJ_DIR}/${LIBCHDB_SO}.debug
+    fi
+fi
 
 echo -e "\nSymbols:"
 echo -e "\nPyInit in PYCHDB: ${PYCHDB}"
@@ -354,3 +391,14 @@ if ! command -v pyenv >/dev/null 2>&1 && [ -z "${CHDB_PYBIND11_NATIVE_PYTHON_EXE
 fi
 
 CMAKE_ARGS="${CMAKE_ARGS}" bash ${DIR}/build_pybind11.sh --all
+
+if [ ${build_type} != "Debug" ]; then
+    echo -e "\nStrip pybind11 stubs library:"
+    if [ "$(uname)" == "Darwin" ]; then
+        STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.dylib
+        [ -f ${STUBS_LIB} ] && ${STRIP} -S -x ${STUBS_LIB}
+    else
+        STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.so
+        [ -f ${STUBS_LIB} ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${STUBS_LIB}
+    fi
+fi
