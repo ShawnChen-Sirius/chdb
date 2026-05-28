@@ -102,7 +102,7 @@ def maybe_rewrite_pyproject_name_for_lite():
     )
     new_content = re.sub(
         r'^keywords\s*=\s*\[[^\]]*\]\s*$',
-        'keywords = ["chdb", "chdb-core", "chdb-core-lite", "lite", "slim", "clickhouse", "olap", "analytics", "database", "sql", "serverless", "lambda", "edge"]',
+        'keywords = ["chdb", "chdb-core", "chdb-core-lite", "lite", "clickhouse", "olap", "analytics", "database", "sql", "serverless", "edge"]',
         new_content,
         flags=re.MULTILINE,
     )
