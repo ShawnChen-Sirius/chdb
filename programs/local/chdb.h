@@ -306,6 +306,107 @@ CHDB_EXPORT chdb_result *
 chdb_stream_query_n(chdb_connection conn, const char * query, size_t query_len, const char * format, size_t format_len);
 
 /**
+ * Executes a query with server-side named parameter binding.
+ * @brief Binds {name:Type} placeholders before query execution; values are NOT interpolated into SQL.
+ * @param conn Connection to execute query on
+ * @param query SQL query string (NUL-terminated, e.g. "SELECT {x:Int64} AS v")
+ * @param format Output format string (e.g. "CSV", "JSON")
+ * @param param_names Array of param_count NUL-terminated parameter names (must match {name:Type} placeholders)
+ * @param param_values Array of param_count NUL-terminated parameter values
+ * @param param_count Number of name/value pairs in the arrays
+ * @return Query result structure containing output or error message
+ * @note Parameter values are passed to the engine as strings; the engine resolves the type from the
+ *       {name:Type} placeholder. This avoids SQL injection (no string interpolation) and enables
+ *       server-side query-plan caching.
+ * @note On duplicate parameter names, the last value wins (NameToNameMap semantics).
+ * @note Parameters are scoped to this single call and cleared on return (RAII).
+ * @note Use chdb_query_with_params_n for binary-safe values containing NUL bytes.
+ */
+CHDB_EXPORT chdb_result * chdb_query_with_params(
+    chdb_connection conn,
+    const char * query,
+    const char * format,
+    const char * const * param_names,
+    const char * const * param_values,
+    size_t param_count);
+
+/**
+ * Executes a query with server-side named parameter binding and explicit string lengths.
+ * @brief Binary-safe variant of chdb_query_with_params() — values may contain NUL bytes.
+ * @param conn Connection to execute query on
+ * @param query SQL query buffer (may contain NUL bytes)
+ * @param query_len Length of query buffer in bytes
+ * @param format Output format buffer (may contain NUL bytes)
+ * @param format_len Length of format buffer in bytes
+ * @param param_names Array of param_count parameter names (each name_lens[i] bytes long)
+ * @param param_name_lens Array of param_count byte lengths for param_names
+ * @param param_values Array of param_count parameter value buffers (each value_lens[i] bytes long)
+ * @param param_value_lens Array of param_count byte lengths for param_values
+ * @param param_count Number of name/value pairs
+ * @return Query result structure containing output or error message
+ * @note Strings do not need to be NUL-terminated.
+ */
+CHDB_EXPORT chdb_result * chdb_query_with_params_n(
+    chdb_connection conn,
+    const char * query,
+    size_t query_len,
+    const char * format,
+    size_t format_len,
+    const char * const * param_names,
+    const size_t * param_name_lens,
+    const char * const * param_values,
+    const size_t * param_value_lens,
+    size_t param_count);
+
+/**
+ * Executes a streaming query with server-side named parameter binding.
+ * @brief Initializes streaming query execution with parameter binding.
+ * @param conn Connection to execute query on
+ * @param query SQL query string (NUL-terminated)
+ * @param format Output format string (e.g. "CSV", "JSON")
+ * @param param_names Array of param_count NUL-terminated parameter names
+ * @param param_values Array of param_count NUL-terminated parameter values
+ * @param param_count Number of name/value pairs
+ * @return Streaming result handle containing query state or error message
+ * @note Parameters are bound on the connection before streaming starts and cleared once the
+ *       streaming initialization returns (the engine has already captured the parameter values).
+ */
+CHDB_EXPORT chdb_result * chdb_stream_query_with_params(
+    chdb_connection conn,
+    const char * query,
+    const char * format,
+    const char * const * param_names,
+    const char * const * param_values,
+    size_t param_count);
+
+/**
+ * Executes a streaming query with server-side named parameter binding and explicit string lengths.
+ * @brief Binary-safe variant of chdb_stream_query_with_params().
+ * @param conn Connection to execute query on
+ * @param query SQL query buffer (may contain NUL bytes)
+ * @param query_len Length of query buffer in bytes
+ * @param format Output format buffer (may contain NUL bytes)
+ * @param format_len Length of format buffer in bytes
+ * @param param_names Array of param_count parameter names
+ * @param param_name_lens Array of param_count byte lengths for param_names
+ * @param param_values Array of param_count parameter value buffers
+ * @param param_value_lens Array of param_count byte lengths for param_values
+ * @param param_count Number of name/value pairs
+ * @return Streaming result handle containing query state or error message
+ */
+CHDB_EXPORT chdb_result * chdb_stream_query_with_params_n(
+    chdb_connection conn,
+    const char * query,
+    size_t query_len,
+    const char * format,
+    size_t format_len,
+    const char * const * param_names,
+    const size_t * param_name_lens,
+    const char * const * param_values,
+    const size_t * param_value_lens,
+    size_t param_count);
+
+/**
  * Fetches next chunk of streaming results.
  * @brief Iterates through streaming query results
  * @param conn Active connection handle
