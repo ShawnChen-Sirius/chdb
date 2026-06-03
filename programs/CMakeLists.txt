@@ -35,8 +35,10 @@ macro(clickhouse_program_add name)
     clickhouse_program_add_library(${name})
 endmacro()
 
+# chdb_spec
 add_subdirectory (local)
 add_subdirectory (server)
+# chdb_spec
 
 clickhouse_add_executable (clickhouse main.cpp)
 
@@ -69,5 +71,7 @@ function(clickhouse_program_install name lib_name)
     endforeach()
 endfunction()
 
+# chdb_spec
 clickhouse_program_install(clickhouse-local local chl ch)
 clickhouse_program_install(clickhouse-server server)
+# chdb_spec
