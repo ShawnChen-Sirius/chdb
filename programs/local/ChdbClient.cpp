@@ -159,7 +159,6 @@ size_t ChdbClient::getStorageBytesRead() const
     return 0;
 }
 
-#if USE_PYTHON
 void ChdbClient::setQueryParameters(const NameToNameMap & params)
 {
     std::lock_guard<std::mutex> lock(client_mutex);
@@ -176,6 +175,7 @@ void ChdbClient::clearQueryParameters()
         client_context->setQueryParameters(query_parameters);
 }
 
+#if USE_PYTHON
 void ChdbClient::findQueryableObjFromPyCache(const String & query_str) const
 {
     python_table_cache->findQueryableObjFromQuery(query_str);

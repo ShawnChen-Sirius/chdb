@@ -21,9 +21,13 @@
         chdb_close_conn;
         chdb_query;
         chdb_query_n;
+        chdb_query_with_params;
+        chdb_query_with_params_n;
         chdb_query_cmdline;
         chdb_stream_query;
         chdb_stream_query_n;
+        chdb_stream_query_with_params;
+        chdb_stream_query_with_params_n;
         chdb_stream_fetch_result;
         chdb_stream_cancel_query;
         chdb_destroy_query_result;
