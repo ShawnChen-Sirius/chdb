@@ -21,6 +21,19 @@ struct RegisteredArray
     py::array numpy_array;
 };
 
+/// Zero-copy view over one chunk of an Arrow-backed string column
+/// (pandas 3.x StringDtype with pyarrow storage). Buffers are owned by the
+/// pyarrow ChunkedArray held alive via ColumnWrapper::tmp.
+struct ArrowStringChunkView
+{
+    const UInt8 * validity = nullptr; /// validity bitmap, nullptr means all valid
+    const void * offsets = nullptr;   /// Int32 (string) or Int64 (large_string) value offsets
+    const char * data = nullptr;      /// utf8 payload, may be nullptr when empty
+    size_t offset = 0;                /// arrow array offset (slice support), in elements/bits
+    size_t length = 0;                /// number of rows in this chunk
+    size_t row_start = 0;             /// global row index of the first row of this chunk
+};
+
 struct ColumnWrapper
 {
     void * buf; // we may modify the data when cast it to PyObject **, so we need a non-const pointer
@@ -39,6 +52,11 @@ struct ColumnWrapper
     bool is_category = false;
     ColumnUniquePtr category_unique;
     std::string category_codes_type;
+
+    /// Arrow-backed string column fast path (no per-row PyObject access)
+    bool is_arrow_string = false;
+    bool arrow_large_offsets = false;
+    std::vector<ArrowStringChunkView> arrow_string_chunks;
 
     ~ColumnWrapper()
     {

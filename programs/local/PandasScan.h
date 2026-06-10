@@ -32,6 +32,12 @@ public:
 private:
     static void innerCheck(const DB::ColumnWrapper & col_wrap);
 
+    static void innerScanArrowString(
+        const size_t cursor,
+        const size_t count,
+        const DB::ColumnWrapper & col_wrap,
+        DB::MutableColumnPtr & column);
+
     static void innerScanObject(
         const size_t cursor,
         const size_t count,

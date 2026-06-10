@@ -35,13 +35,9 @@ static size_t ConvertPyUnicodeToUtf8(const void * input, int kind, size_t codepo
 
     // Estimate the maximum buffer size required for the UTF-8 output
     // Buffers is reserved from the caller, so we can safely resize it and memory will not be wasted
-    size_t estimated_size = codepoint_cnt * 4 + 1; // Allocate buffer for UTF-8 output
+    size_t estimated_size = codepoint_cnt * 4; // Allocate buffer for UTF-8 output
     size_t chars_cursor = chars.size();
-    size_t target_size = chars_cursor + estimated_size;
-    chars.resize(target_size);
-
-    // Resize the character buffer to accommodate the UTF-8 string
-    chars.resize(chars_cursor + estimated_size + 1); // +1 for null terminator
+    chars.resize(chars_cursor + estimated_size);
 
     size_t offset = chars_cursor;
     switch (kind)
@@ -75,11 +71,13 @@ static size_t ConvertPyUnicodeToUtf8(const void * input, int kind, size_t codepo
         }
     }
 
-    chars[offset++] = '\0'; // Null terminate the output string
-    offsets.push_back(offset); // Include the null terminator in the offset
-    chars.resize(offset); // Resize to the actual used size, including null terminator
+    /// ColumnString stores raw payload without terminators: offsets point just
+    /// past the last byte of each value (same convention as ColumnString::insertData).
+    /// The old code appended a '\0' here, corrupting every non-ASCII string value.
+    offsets.push_back(offset);
+    chars.resize(offset); // Resize to the actual used size
 
-    return offset; // Return the number of bytes written, not including the null terminator
+    return offset; // Return the number of bytes written
 }
 
 void FillColumnString(PyObject * obj, ColumnString * column)
