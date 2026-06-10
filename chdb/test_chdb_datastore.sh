@@ -73,8 +73,18 @@ echo "Running pytest from datastore/ on tests/"
 echo "(cwd=datastore so 'from tests.test_utils import ...' resolves to datastore/tests/)"
 echo "=============================================="
 cd "${CHDB_SRC}/datastore"
+
+# These upstream tests are marked strict-xfail for bugs that chdb-core has
+# since fixed (non-ASCII string values scanned through Python(df) used to
+# carry a trailing NUL byte, breaking SQL string equality), so they now
+# XPASS(strict) and would fail the run. Deselect them until the upstream
+# chdb tag drops the xfail markers.
+DESELECT_FIXED_XFAILS="\
+ --deselect tests/test_exploratory_batch11_advanced_indexing.py::TestAdvancedStringOperations::test_str_normalize \
+ --deselect tests/test_exploratory_batch16_index_copy_edge.py::TestUnicodeAndSpecialCharacters::test_unicode_string_values"
+
 set +e
-${PYTHON} -m pytest tests/ ${PYTEST_ARGS}
+${PYTHON} -m pytest tests/ ${PYTEST_ARGS} ${DESELECT_FIXED_XFAILS}
 TEST_EXIT_CODE=$?
 set -e
 
