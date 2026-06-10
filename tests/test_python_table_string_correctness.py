@@ -178,5 +178,150 @@ class TestStringColumnWithMissingValues(unittest.TestCase):
         )
 
 
+def arrow_str_series(values):
+    """Arrow-backed string Series on both pandas 2.x and 3.x.
+
+    string[pyarrow] is ArrowStringArray on 2.x and 3.x alike; pandas always
+    stores large_string (int32-offset `string` arrays are cast on
+    construction, so that branch is unreachable from pandas).
+    """
+    return pd.Series(pd.array(values, dtype="string[pyarrow]"))
+
+
+class TestArrowStringChunksAndSlices(unittest.TestCase):
+    """Multi-chunk arrays, sliced arrays (non-zero offset) and degenerate
+    shapes through the Arrow buffer scan path, on pandas 2.x and 3.x."""
+
+    def test_multi_chunk_with_nulls_and_empty(self):
+        a = [CJK, "", None, CAFE] * 25
+        b = [CYR, None, ROCKET, ""] * 25
+        s = pd.concat([arrow_str_series(a), arrow_str_series(b)], ignore_index=True)
+        df = pd.DataFrame({"s": s})
+        if hasattr(s.array, "_pa_array"):
+            self.assertGreaterEqual(s.array._pa_array.num_chunks, 2)
+        values = a + b
+        valid = [v for v in values if v is not None]
+        self.assertEqual(
+            q("SELECT COUNT(*), COUNT(s), COUNT(DISTINCT s) FROM Python(df)"),
+            f"{len(values)},{len(valid)},{len(set(valid))}",
+        )
+        self.assertEqual(
+            q("SELECT sum(length(s)) FROM Python(df)"),
+            str(sum(len(v.encode()) for v in valid)),
+        )
+        self.assertEqual(
+            q(f"SELECT COUNT(*) FROM Python(df) WHERE s = '{CJK}'"), "25"
+        )
+        self.assertEqual(q("SELECT COUNT(*) FROM Python(df) WHERE s = ''"), "50")
+
+    def test_sliced_with_nulls_validity_bit_offset(self):
+        """iloc slice keeps the Arrow buffers and bumps the chunk offset, so
+        the validity bitmap must be read with a bit-level offset."""
+        base = [CJK, None, CAFE, "", None, CYR, ROCKET] * 40
+        full = pd.DataFrame({"s": arrow_str_series(base)})
+        for start, stop in [(7, 207), (1, 280), (13, 14)]:
+            df = full.iloc[start:stop].reset_index(drop=True)
+            window = base[start:stop]
+            valid = [v for v in window if v is not None]
+            self.assertEqual(
+                q("SELECT COUNT(*), COUNT(s), sum(length(s)) FROM Python(df)"),
+                f"{len(window)},{len(valid)},{sum(len(v.encode()) for v in valid)}",
+                f"slice [{start}:{stop}]",
+            )
+
+    def test_slice_spanning_chunks(self):
+        s = pd.concat(
+            [arrow_str_series([CJK] * 50), arrow_str_series([CYR] * 50)],
+            ignore_index=True,
+        )
+        df = pd.DataFrame({"s": s}).iloc[30:70].reset_index(drop=True)
+        self.assertEqual(
+            q("SELECT countIf(s = '{}') , countIf(s = '{}') FROM Python(df)".format(CJK, CYR)),
+            "20,20",
+        )
+
+    def test_all_null_column(self):
+        df = pd.DataFrame({"s": arrow_str_series([None, None, None])})
+        self.assertEqual(q("SELECT COUNT(*), COUNT(s) FROM Python(df)"), "3,0")
+
+    def test_all_empty_strings(self):
+        """Empty data buffer edge case."""
+        df = pd.DataFrame({"s": arrow_str_series(["", "", ""])})
+        self.assertEqual(
+            q("SELECT COUNT(*), COUNT(s), sum(length(s)) FROM Python(df)"), "3,3,0"
+        )
+
+
+class TestArrowStringLargerVolume(unittest.TestCase):
+    """~300k rows: spans multiple max_block_size (65409) blocks, multiple
+    parallel scan streams, and a chunk boundary inside a stream range."""
+
+    @classmethod
+    def setUpClass(cls):
+        pattern = [CJK, CYR + "suffix", "", None, CAFE * 3, ROCKET, "plain ascii"]
+        cls.values = (pattern * 21500)[:150000] + ([None, CJK * 2, "tail"] * 50000)
+        half = len(cls.values) // 2
+        cls.df = pd.DataFrame(
+            {
+                "s": pd.concat(
+                    [
+                        arrow_str_series(cls.values[:half]),
+                        arrow_str_series(cls.values[half:]),
+                    ],
+                    ignore_index=True,
+                ),
+                "i": range(len(cls.values)),
+            }
+        )
+        cls.valid = [v for v in cls.values if v is not None]
+
+    def test_counts_and_byte_lengths(self):
+        df = self.df  # noqa: F841
+        self.assertEqual(
+            q("SELECT COUNT(*), COUNT(s), COUNT(DISTINCT s) FROM Python(df)"),
+            f"{len(self.values)},{len(self.valid)},{len(set(self.valid))}",
+        )
+        self.assertEqual(
+            q("SELECT sum(length(s)) FROM Python(df)"),
+            str(sum(len(v.encode()) for v in self.valid)),
+        )
+
+    def test_min_max_and_filters(self):
+        df = self.df  # noqa: F841
+        lo, hi = min(self.valid), max(self.valid)
+        self.assertEqual(
+            q("SELECT hex(MIN(s)), hex(MAX(s)) FROM Python(df)"),
+            f'"{lo.encode().hex().upper()}","{hi.encode().hex().upper()}"',
+        )
+        self.assertEqual(
+            q(f"SELECT COUNT(*) FROM Python(df) WHERE s = '{CJK}'"),
+            str(self.values.count(CJK)),
+        )
+        self.assertEqual(
+            q("SELECT COUNT(*) FROM Python(df) WHERE s IS NULL"),
+            str(self.values.count(None)),
+        )
+
+    def test_group_by_matches_pandas(self):
+        df = self.df  # noqa: F841
+        got = q(
+            "SELECT s, COUNT(*) c FROM Python(df) WHERE s IS NOT NULL "
+            "GROUP BY s ORDER BY c DESC, s LIMIT 5"
+        )
+        vc = pd.Series(self.valid).value_counts()
+        expected_pairs = sorted(vc.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        expected = "\n".join(f'"{k}",{v}' for k, v in expected_pairs)
+        self.assertEqual(got, expected)
+
+    def test_row_alignment_with_numeric_column(self):
+        """String rows must stay aligned with the parallel-scanned int column."""
+        df = self.df  # noqa: F841
+        idx = [i for i, v in enumerate(self.values) if v == "tail"]
+        self.assertEqual(
+            q("SELECT min(i), max(i), COUNT(*) FROM Python(df) WHERE s = 'tail'"),
+            f"{idx[0]},{idx[-1]},{len(idx)}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
