@@ -79,7 +79,13 @@ cd "${CHDB_SRC}/datastore"
 # carry a trailing NUL byte, breaking SQL string equality), so they now
 # XPASS(strict) and would fail the run. Deselect them until the upstream
 # chdb tag drops the xfail markers.
+# Both path forms are passed because pytest resolves --deselect node ids
+# against the rootdir (the clone root, where the configfile lives) on
+# pytest >= 9, but against the invocation dir on older versions; deselect
+# silently ignores whichever form does not match.
 DESELECT_FIXED_XFAILS="\
+ --deselect datastore/tests/test_exploratory_batch11_advanced_indexing.py::TestAdvancedStringOperations::test_str_normalize \
+ --deselect datastore/tests/test_exploratory_batch16_index_copy_edge.py::TestUnicodeAndSpecialCharacters::test_unicode_string_values \
  --deselect tests/test_exploratory_batch11_advanced_indexing.py::TestAdvancedStringOperations::test_str_normalize \
  --deselect tests/test_exploratory_batch16_index_copy_edge.py::TestUnicodeAndSpecialCharacters::test_unicode_string_values"
 
