@@ -2,6 +2,7 @@
 #include "NumpyType.h"
 #include "PandasDataFrame.h"
 #include "PybindWrapper.h"
+#include "PythonImporter.h"
 #include "PythonSource.h"
 #include "PyArrowTable.h"
 #include "PyArrowStreamFactory.h"
@@ -157,6 +158,17 @@ void StoragePython::prepareColumnCache(
 #endif
 
     auto & data_source = data_source_wrapper->getDataSource();
+
+    if (is_pandas_df)
+    {
+        /// Pre-resolve lazily-imported pandas attributes that GIL-free scan threads
+        /// compare against (isNone checks pandas.NaT / pandas.NA). The first access
+        /// imports them via Python C-API, which must happen while the GIL is held;
+        /// afterwards scan threads only do pointer comparisons.
+        auto & import_cache = CHDB::PythonImporter::ImportCache();
+        import_cache.pandas.NaT();
+        import_cache.pandas.NA();
+    }
 
     bool need_rebuild = (column_cache == nullptr) || (column_cache->size() != names.size());
     if (!need_rebuild)

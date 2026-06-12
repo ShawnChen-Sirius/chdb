@@ -146,6 +146,13 @@ ColumnPtr PandasScan::scanColumn(
 
     WhichDataType which(real_type);
 
+    if (col_wrap.is_arrow_string)
+    {
+        chassert(which.idx == TypeIndex::String);
+        innerScanArrowString(cursor, count, col_wrap, column);
+        return column;
+    }
+
     if (col_wrap.is_object_type)
     {
         SerializationPtr serialization;
@@ -475,11 +482,11 @@ void PandasScan::innerScanFloat(
         const T * start = ptr + cursor;
         helper->appendRawData<sizeof(T)>(reinterpret_cast<const char *>(start), count);
 
+        const size_t old_size = null_map.size();
+        null_map.resize(old_size + count);
+        UInt8 * null_pos = null_map.data() + old_size;
         for (size_t i = 0; i < count; ++i)
-        {
-            bool is_nan = std::isnan(start[i]);
-            null_map.push_back(is_nan ? 1 : 0);
-        }
+            null_pos[i] = start[i] != start[i] ? 1 : 0; /// NaN check, auto-vectorizable
     }
     else
     {
@@ -583,11 +590,11 @@ void PandasScan::innerScanDateTime64(
         const Int64 * start = ptr + cursor;
         helper->appendRawData<sizeof(Int64)>(reinterpret_cast<const char *>(start), count);
 
+        const size_t old_size = null_map.size();
+        null_map.resize(old_size + count);
+        UInt8 * null_pos = null_map.data() + old_size;
         for (size_t i = 0; i < count; ++i)
-        {
-            bool is_nat = start[i] <= std::numeric_limits<Int64>::min();
-            null_map.push_back(is_nat ? 1 : 0);
-        }
+            null_pos[i] = start[i] == std::numeric_limits<Int64>::min() ? 1 : 0; /// NaT check, auto-vectorizable
     }
     else
     {
@@ -621,11 +628,11 @@ void PandasScan::innerScanInterval(
         const Int64 * start = ptr + cursor;
         helper->appendRawData<sizeof(Int64)>(reinterpret_cast<const char *>(start), count);
 
+        const size_t old_size = null_map.size();
+        null_map.resize(old_size + count);
+        UInt8 * null_pos = null_map.data() + old_size;
         for (size_t i = 0; i < count; ++i)
-        {
-            bool is_nat = start[i] <= std::numeric_limits<Int64>::min();
-            null_map.push_back(is_nat ? 1 : 0);
-        }
+            null_pos[i] = start[i] == std::numeric_limits<Int64>::min() ? 1 : 0; /// NaT check, auto-vectorizable
     }
     else
     {
@@ -639,6 +646,118 @@ void PandasScan::innerScanInterval(
             bool is_nat = value <= std::numeric_limits<Int64>::min();
             null_map.push_back(is_nat ? 1 : 0);
         }
+    }
+}
+
+template <typename OffsetT>
+static void scanArrowStringSegment(
+    const ArrowStringChunkView & chunk,
+    const size_t local_start,
+    const size_t n,
+    ColumnString & column_string,
+    NullMap & null_map)
+{
+    auto & chars = column_string.getChars();
+    auto & offsets = column_string.getOffsets();
+
+    const OffsetT * off = static_cast<const OffsetT *>(chunk.offsets) + chunk.offset + local_start;
+    const char * data = chunk.data;
+
+    /// ColumnString stores raw payload back to back (no terminators), so for a
+    /// fully-valid segment the Arrow data buffer slice can be copied wholesale.
+    const size_t total_bytes = static_cast<size_t>(off[n] - off[0]);
+    size_t chars_pos = chars.size();
+    chars.resize(chars_pos + total_bytes);
+
+    const size_t offsets_old = offsets.size();
+    offsets.resize(offsets_old + n);
+    auto * offsets_pos = offsets.data() + offsets_old;
+
+    const size_t null_old = null_map.size();
+    null_map.resize(null_old + n);
+    UInt8 * null_pos = null_map.data() + null_old;
+
+    char * dst = reinterpret_cast<char *>(chars.data());
+
+    if (chunk.validity == nullptr)
+    {
+        if (total_bytes)
+            memcpy(dst + chars_pos, data + off[0], total_bytes);
+        const OffsetT base = off[0];
+        for (size_t i = 0; i < n; ++i)
+            offsets_pos[i] = chars_pos + static_cast<size_t>(off[i + 1] - base);
+        memset(null_pos, 0, n);
+        chars_pos += total_bytes;
+    }
+    else
+    {
+        const UInt8 * validity = chunk.validity;
+        const size_t bit_base = chunk.offset + local_start;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const size_t bit = bit_base + i;
+            const bool is_valid = validity[bit >> 3] & (1u << (bit & 7));
+            if (is_valid)
+            {
+                const size_t len = static_cast<size_t>(off[i + 1] - off[i]);
+                if (len)
+                    memcpy(dst + chars_pos, data + off[i], len);
+                chars_pos += len;
+                null_pos[i] = 0;
+            }
+            else
+            {
+                null_pos[i] = 1;
+            }
+            offsets_pos[i] = chars_pos;
+        }
+
+        if (chars.size() != chars_pos)
+            chars.resize(chars_pos); /// null rows reserve payload they do not use
+    }
+}
+
+void PandasScan::innerScanArrowString(
+    const size_t cursor,
+    const size_t count,
+    const ColumnWrapper & col_wrap,
+    MutableColumnPtr & column)
+{
+    auto & nullable_column = assert_cast<ColumnNullable &>(*column);
+    auto data_column = nullable_column.getNestedColumnPtr()->assumeMutable();
+    auto & null_map = nullable_column.getNullMapData();
+    auto * column_string = assert_cast<ColumnString *>(data_column.get());
+
+    const auto & chunks = col_wrap.arrow_string_chunks;
+
+    /// Find the chunk containing `cursor` (chunks are sorted by row_start)
+    size_t lo = 0;
+    size_t hi = chunks.size();
+    while (lo < hi)
+    {
+        const size_t mid = (lo + hi) / 2;
+        if (chunks[mid].row_start + chunks[mid].length <= cursor)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+
+    size_t row = cursor;
+    size_t remaining = count;
+    for (size_t chunk_idx = lo; remaining > 0; ++chunk_idx)
+    {
+        chassert(chunk_idx < chunks.size());
+        const auto & chunk = chunks[chunk_idx];
+        const size_t local_start = row - chunk.row_start;
+        const size_t n = std::min(remaining, chunk.length - local_start);
+
+        if (col_wrap.arrow_large_offsets)
+            scanArrowStringSegment<Int64>(chunk, local_start, n, *column_string, null_map);
+        else
+            scanArrowStringSegment<Int32>(chunk, local_start, n, *column_string, null_map);
+
+        row += n;
+        remaining -= n;
     }
 }
 

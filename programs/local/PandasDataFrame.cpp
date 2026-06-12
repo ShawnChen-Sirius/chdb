@@ -151,6 +151,75 @@ bool PandasDataFrame::isPyArrowBacked(const py::handle & /*object*/)
     return false;
 }
 
+/// Capture zero-copy buffer views over an Arrow-backed string column
+/// (pandas StringDtype with pyarrow storage, the default `str` dtype since pandas 3.x).
+/// Reading the Arrow offsets/data buffers directly avoids materializing the whole
+/// column into an object ndarray (one PyObject per row) via to_numpy() and avoids
+/// any per-row Python C-API calls during the scan.
+static bool tryFillArrowStringColumn(DB::ColumnWrapper & column, const py::object & underlying_array)
+{
+    if (!py::hasattr(underlying_array, "_pa_array"))
+        return false;
+
+    py::object chunked = underlying_array.attr("_pa_array");
+    if (!py::hasattr(chunked, "chunks") || !py::hasattr(chunked, "type"))
+        return false;
+
+    auto type_str = py::str(chunked.attr("type")).cast<std::string>();
+    bool large_offsets;
+    if (type_str == "large_string")
+        large_offsets = true;
+    else if (type_str == "string")
+        large_offsets = false;
+    else
+        return false; /// e.g. string_view has a different buffer layout
+
+    std::vector<DB::ArrowStringChunkView> views;
+    size_t row_start = 0;
+    for (const auto & chunk_handle : chunked.attr("chunks"))
+    {
+        auto chunk = py::reinterpret_borrow<py::object>(chunk_handle);
+        DB::ArrowStringChunkView view;
+        view.length = py::len(chunk);
+        view.offset = chunk.attr("offset").cast<size_t>();
+        view.row_start = row_start;
+
+        py::list buffers = chunk.attr("buffers")();
+        if (py::len(buffers) != 3)
+            return false;
+
+        auto buffer_address = [](const py::handle & buffer) -> const void *
+        {
+            if (buffer.is_none())
+                return nullptr;
+            return reinterpret_cast<const void *>(buffer.attr("address").cast<uintptr_t>());
+        };
+
+        view.validity = static_cast<const UInt8 *>(buffer_address(buffers[0]));
+        view.offsets = buffer_address(buffers[1]);
+        view.data = static_cast<const char *>(buffer_address(buffers[2]));
+
+        if (view.length > 0 && view.offsets == nullptr)
+            return false;
+
+        row_start += view.length;
+        views.emplace_back(view);
+    }
+
+    if (row_start != column.row_count)
+        return false;
+
+    column.arrow_string_chunks = std::move(views);
+    column.arrow_large_offsets = large_offsets;
+    column.is_arrow_string = true;
+    column.is_object_type = false;
+    column.data = chunked;
+    column.buf = chunked.ptr(); /// non-null sentinel, never dereferenced on this path
+    column.tmp = chunked;       /// keep the ChunkedArray (and its buffers) alive
+    column.tmp.inc_ref();
+    return true;
+}
+
 void PandasDataFrame::fillColumn(
     const py::handle & data_source,
     const std::string & col_name,
@@ -244,6 +313,11 @@ void PandasDataFrame::fillColumn(
     }
 
     py::object underlying_array = series.attr("array");
+
+    /// Fast path for Arrow-backed string columns (pandas 3.x default `str` dtype,
+    /// pandas 2.x string[pyarrow]): scan the Arrow buffers directly, zero-copy.
+    if (numpy_type.type == NumpyNullableType::STRING && tryFillArrowStringColumn(column, underlying_array))
+        return;
 
     if (py::hasattr(underlying_array, "_mask"))
     {

@@ -76,20 +76,15 @@ void PythonTableCache::findQueryableObjFromQuery(const String & query_str)
     // Try to match and extract the groups
     while (RE2::FindAndConsume(&input, pattern, &quoted_match, &unquoted_match))
     {
-        // If quoted string was matched
-        if (!quoted_match.empty())
-        {
-            auto handle = findQueryableObj(quoted_match);
-            if (!handle.is_none())
-                py_table_cache.emplace(quoted_match, handle);
-        }
-        // If unquoted identifier was matched
-        else if (!unquoted_match.empty())
-        {
-            auto handle = findQueryableObj(unquoted_match);
-            if (!handle.is_none())
-                py_table_cache.emplace(unquoted_match, handle);
-        }
+        // Skip the (expensive) inspect frame walk when the name is already cached;
+        // emplace never overwrites an existing entry anyway.
+        const auto & matched = !quoted_match.empty() ? quoted_match : unquoted_match;
+        if (matched.empty() || py_table_cache.contains(matched))
+            continue;
+
+        auto handle = findQueryableObj(matched);
+        if (!handle.is_none())
+            py_table_cache.emplace(matched, handle);
     }
 }
 
