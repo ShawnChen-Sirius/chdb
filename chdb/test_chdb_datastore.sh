@@ -36,12 +36,44 @@ fi
 CORE_VERSION=$(${PYTHON} -c "import chdb; print(chdb.query('SELECT version()', 'CSV').bytes().decode().strip())" 2>/dev/null || echo "unknown")
 echo "chdb-core engine version: ${CORE_VERSION}"
 
+resolve_latest_chdb_tag() {
+    local i auth=() body tag
+    [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    # Primary path: GitHub API. Keeps pre-release filtering semantics.
+    for i in 1 2 3; do
+        # ${auth[@]+"${auth[@]}"} expands to nothing if 'auth' is an empty
+        # array — needed for macOS bash 3.2 + `set -u`, which otherwise
+        # treats "${auth[@]}" as an unbound variable.
+        body=$(curl -fsSL ${auth[@]+"${auth[@]}"} \
+            https://api.github.com/repos/chdb-io/chdb/releases/latest 2>/dev/null) || body=""
+        if [ -n "$body" ]; then
+            tag=$(printf '%s' "$body" \
+                | ${PYTHON} -c "import json, sys; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || tag=""
+            if [ -n "$tag" ]; then
+                printf '%s' "$tag"
+                return 0
+            fi
+        fi
+        sleep $((i * 5))
+    done
+    # Fallback: git ls-remote. Bypasses the GitHub API rate limit entirely
+    # when the shared runner IP pool exhausts the unauthenticated 60/h quota.
+    echo "GitHub API failed after 3 attempts; falling back to git ls-remote..." >&2
+    tag=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/chdb-io/chdb.git 'v*' 2>/dev/null \
+        | head -1 | awk '{print $2}' | sed 's|refs/tags/||')
+    if [ -n "$tag" ]; then
+        printf '%s' "$tag"
+        return 0
+    fi
+    return 1
+}
+
 if [ -z "${CHDB_TAG:-}" ]; then
     echo "Resolving latest chdb release tag from GitHub..."
-    CHDB_TAG=$(curl -fsSL \
-        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
-        https://api.github.com/repos/chdb-io/chdb/releases/latest \
-        | ${PYTHON} -c "import json, sys; print(json.load(sys.stdin)['tag_name'])")
+    CHDB_TAG=$(resolve_latest_chdb_tag) || {
+        echo "ERROR: failed to resolve latest chdb release tag" >&2
+        exit 1
+    }
 fi
 echo "Using chdb tag: ${CHDB_TAG}"
 

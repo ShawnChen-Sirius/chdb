@@ -122,7 +122,9 @@ if [ "${CHDB_LITE}" = "1" ]; then
         -DCHDB_VERSION=${CHDB_VERSION} \
         "
 else
-    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DENABLE_THINLTO=0 -DENABLE_XRAY=0 -DENABLE_TESTS=0 -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
+    # Explicit -DCHDB_LITE=OFF resets the cmake cache when buildlib/ was previously
+    # configured for chdb-core-lite (CI runs lite before FT in the same buildlib/).
+    CMAKE_ARGS="-DCMAKE_BUILD_TYPE=${build_type} -DCHDB_LITE=OFF -DENABLE_THINLTO=0 -DENABLE_XRAY=0 -DENABLE_TESTS=0 -DENABLE_CLICKHOUSE_SERVER=0 -DENABLE_CLICKHOUSE_CLIENT=0 \
     -DENABLE_CLICKHOUSE_KEEPER=0 -DENABLE_CLICKHOUSE_KEEPER_CONVERTER=0 -DENABLE_CLICKHOUSE_LOCAL=1 -DENABLE_CLICKHOUSE_SU=0 -DENABLE_CLICKHOUSE_BENCHMARK=0 \
     -DENABLE_AZURE_BLOB_STORAGE=1 -DENABLE_CLICKHOUSE_COPIER=0 -DENABLE_CLICKHOUSE_DISKS=0 -DENABLE_CLICKHOUSE_FORMAT=0 -DENABLE_CLICKHOUSE_GIT_IMPORT=0 \
     -DENABLE_AWS_S3=1 -DENABLE_HIVE=0 -DENABLE_AVRO=1 \
@@ -224,15 +226,38 @@ if [ "${CHDB_LITE}" != "1" ]; then
 fi
 
 # build chdb python module
-py_version="3.9"
-current_py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
-if [ "$current_py_version" != "$py_version" ]; then
-    echo "Error: Current Python version is $current_py_version, but required version is $py_version"
-    echo "Please switch to Python $py_version using: pyenv shell $py_version"
-    exit 1
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    # Resolve the Python interpreter once: prefer python3, fall back to python.
+    # Some Linux distros (Debian/Ubuntu without python-is-python3) ship only `python3`.
+    PYTHON_BIN=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+    if [ -z "${PYTHON_BIN}" ]; then
+        echo "Error: CHDB_FREE_THREADING=1 but neither 'python3' nor 'python' is on PATH"
+        exit 1
+    fi
+    py_version=$("${PYTHON_BIN}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    is_ft=$("${PYTHON_BIN}" -c "import sysconfig; print(sysconfig.get_config_var('Py_GIL_DISABLED') or 0)")
+    if [ "$is_ft" != "1" ]; then
+        echo "Error: CHDB_FREE_THREADING=1 but current Python (${PYTHON_BIN}) is not a free-threading build"
+        exit 1
+    fi
+    echo "Using free-threading Python ${py_version} at ${PYTHON_BIN}"
+    FREE_THREADING_CMAKE="-DCHDB_FREE_THREADING=1"
+else
+    py_version="3.9"
+    current_py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    if [ "$current_py_version" != "$py_version" ]; then
+        echo "Error: Current Python version is $current_py_version, but required version is $py_version"
+        echo "Please switch to Python $py_version using: pyenv shell $py_version"
+        exit 1
+    fi
+    echo "Using Python version: $current_py_version"
+    FREE_THREADING_CMAKE=""
 fi
-echo "Using Python version: $current_py_version"
-cmake ${CMAKE_ARGS} -DENABLE_PYTHON=1 -DPYBIND11_NONLIMITEDAPI_PYTHON_HEADERS_VERSION=${py_version} ${PROJ_DIR}
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    cmake ${CMAKE_ARGS} ${FREE_THREADING_CMAKE} -DENABLE_PYTHON=1 ${PROJ_DIR}
+else
+    cmake ${CMAKE_ARGS} -DENABLE_PYTHON=1 -DPYBIND11_NONLIMITEDAPI_PYTHON_HEADERS_VERSION=${py_version} ${PROJ_DIR}
+fi
 ninja -d keeprsp || true
 
 # del the binary and run ninja -v again to capture the command, then modify it to generate CHDB_PY_MODULE
@@ -378,28 +403,32 @@ cd ${PROJ_DIR} && pwd
 
 ccache -s || true
 
-# Auto-detect Python for pybind11 when pyenv is absent and env vars are not already set
-if ! command -v pyenv >/dev/null 2>&1 && [ -z "${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE:-}" ]; then
-    _py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
-    if [ -n "${_py}" ]; then
-        _ver=$("${_py}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)
-        if [ -n "${_ver}" ]; then
-            export CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE="${_py}"
-            export CHDB_PYBIND11_PYTHON_VERSIONS="${_ver}"
-            echo "Auto-detected Python ${_ver} at ${_py} for pybind11 build"
+if [ "${CHDB_FREE_THREADING}" == "1" ]; then
+    echo "Free-threading build: skipping pybind11 nonlimitedapi shim libraries (not needed)"
+else
+    # Auto-detect Python for pybind11 when pyenv is absent and env vars are not already set
+    if ! command -v pyenv >/dev/null 2>&1 && [ -z "${CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE:-}" ]; then
+        _py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+        if [ -n "${_py}" ]; then
+            _ver=$("${_py}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)
+            if [ -n "${_ver}" ]; then
+                export CHDB_PYBIND11_NATIVE_PYTHON_EXECUTABLE="${_py}"
+                export CHDB_PYBIND11_PYTHON_VERSIONS="${_ver}"
+                echo "Auto-detected Python ${_ver} at ${_py} for pybind11 build"
+            fi
         fi
     fi
-fi
 
-CMAKE_ARGS="${CMAKE_ARGS}" bash ${DIR}/build_pybind11.sh --all
+    CMAKE_ARGS="${CMAKE_ARGS}" bash ${DIR}/build_pybind11.sh --all
 
-if [ ${build_type} != "Debug" ]; then
-    echo -e "\nStrip pybind11 stubs library:"
-    if [ "$(uname)" == "Darwin" ]; then
-        STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.dylib
-        [ -f ${STUBS_LIB} ] && ${STRIP} -S -x ${STUBS_LIB}
-    else
-        STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.so
-        [ -f ${STUBS_LIB} ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${STUBS_LIB}
+    if [ ${build_type} != "Debug" ]; then
+        echo -e "\nStrip pybind11 stubs library:"
+        if [ "$(uname)" == "Darwin" ]; then
+            STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.dylib
+            [ -f ${STUBS_LIB} ] && ${STRIP} -S -x ${STUBS_LIB}
+        else
+            STUBS_LIB=${CHDB_DIR}/libpybind11nonlimitedapi_stubs.so
+            [ -f ${STUBS_LIB} ] && ${STRIP} --strip-unneeded --remove-section=.comment --remove-section=.note ${STUBS_LIB}
+        fi
     fi
 fi

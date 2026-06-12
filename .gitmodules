@@ -394,7 +394,9 @@
 [submodule "contrib/utf8proc"]
 	path = contrib/utf8proc
 	url = https://github.com/JuliaStrings/utf8proc.git
-# chdb_spec
+[submodule "contrib/pybind11-upstream"]
+	path = contrib/pybind11-upstream
+	url = https://github.com/pybind/pybind11.git
 [submodule "contrib/zmij"]
 	path = contrib/zmij
 	url = https://github.com/vitaut/zmij.git

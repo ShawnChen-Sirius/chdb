@@ -67,13 +67,25 @@ if (USE_PYTHON)
     )
     set (CLICKHOUSE_LOCAL_SOURCES ${CLICKHOUSE_LOCAL_SOURCES} ${CHDB_SOURCES})
 
-    # Use contrib/pybind11 instead of system pybind11
-    set(PYBIND11_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/pybind11/include")
+    # Select pybind11 include path based on build mode
+    if (CHDB_FREE_THREADING)
+        # Free-threading builds use upstream pybind11 (no limited API / stubs needed)
+        set(PYBIND11_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/pybind11-upstream/include")
+    else()
+        # Regular builds use the mrbind-pybind11 fork with stable ABI stubs
+        set(PYBIND11_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/pybind11/include")
+    endif()
 
     # include Python.h
     if(CHDB_CROSSCOMPILING)
-        # For cross-compiling, use the provided Python include directory
-        set(PYTHON_INCLUDE_DIR "${CHDB_PYTHON_INCLUDE_DIR_PREFIX}/3.9")
+        if (CHDB_FREE_THREADING)
+            if (NOT DEFINED CHDB_FREE_THREADING_PYTHON_VERSION)
+                message(FATAL_ERROR "CHDB_FREE_THREADING requires CHDB_FREE_THREADING_PYTHON_VERSION (e.g. 3.13t)")
+            endif()
+            set(PYTHON_INCLUDE_DIR "${CHDB_PYTHON_INCLUDE_DIR_PREFIX}/${CHDB_FREE_THREADING_PYTHON_VERSION}")
+        else()
+            set(PYTHON_INCLUDE_DIR "${CHDB_PYTHON_INCLUDE_DIR_PREFIX}/3.9")
+        endif()
         message(STATUS "Cross-compiling: Using Python include directory: ${PYTHON_INCLUDE_DIR}")
     else()
         # get_path('include') is often wrong on macOS (e.g. /Library/Python/3.9/include with no headers).
@@ -142,7 +154,10 @@ endif()
 if (TARGET ch_contrib::arrow)
     target_link_libraries(clickhouse-local-lib PRIVATE ch_contrib::arrow)
 endif()
-if (TARGET ch_contrib::pybind11_stubs)
+if (CHDB_FREE_THREADING)
+    target_compile_definitions(clickhouse-local-lib PRIVATE Py_GIL_DISABLED=1)
+    target_compile_definitions(clickhouse-local-lib PRIVATE CHDB_FREE_THREADING=1)
+elseif (TARGET ch_contrib::pybind11_stubs)
     target_link_libraries(clickhouse-local-lib PRIVATE ch_contrib::pybind11_stubs)
     target_compile_definitions(clickhouse-local-lib PRIVATE Py_LIMITED_API=0x03090000)
 endif()

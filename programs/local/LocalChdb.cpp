@@ -11,7 +11,9 @@
 #include "PyDateTimeHelper.h"
 #include "chdb.h"
 
+#ifndef CHDB_FREE_THREADING
 #include <pybind11/detail/non_limited_api.h>
+#endif
 #include <pybind11/pybind11.h>
 #include <IO/Progress.h>
 #include <Poco/String.h>
@@ -730,7 +732,11 @@ static void chdb_cleanup_at_exit()
 #endif
 }
 
+#ifdef CHDB_FREE_THREADING
+PYBIND11_MODULE(_chdb, m, py::mod_gil_not_used())
+#else
 PYBIND11_MODULE(_chdb, m)
+#endif
 {
     m.doc() = "chDB module for query function";
 

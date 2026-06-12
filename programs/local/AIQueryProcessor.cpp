@@ -4,7 +4,9 @@
 #include "PybindWrapper.h"
 
 #include <pybind11/pybind11.h>
+#ifndef CHDB_FREE_THREADING
 #include <pybind11/detail/non_limited_api.h>
+#endif
 
 #if USE_CLIENT_AI
 #include <Client/AI/AIClientFactory.h>

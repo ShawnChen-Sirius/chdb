@@ -1,7 +1,9 @@
 #include "PythonConversion.h"
 #include "PythonImporter.h"
 
+#ifndef CHDB_FREE_THREADING
 #include <pybind11/detail/non_limited_api.h>
+#endif
 #include <Columns/ColumnNullable.h>
 #include <Common/Exception.h>
 #include <IO/ReadBuffer.h>
@@ -219,7 +221,11 @@ static void writeByteArray(const py::handle & obj, rapidjson::Value & json_value
 {
     auto * ptr = obj.ptr();
     auto * data = PyByteArray_AsString(ptr);
+#ifdef CHDB_FREE_THREADING
+    auto size = PyByteArray_GET_SIZE(ptr);
+#else
     auto size = pybind11::non_limited_api::PyByteArray_GET_SIZE_(ptr);
+#endif
     json_value.SetString(data, size, allocator);
 }
 

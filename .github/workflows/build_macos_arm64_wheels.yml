@@ -117,6 +117,7 @@ jobs:
           ccache -s
           ls -lh chdb
           df -h
+      # Free-threading wheels live in .github/workflows/build_ft_wheels.yml.
       - name: Keep killall ccache and wait for ccache to finish
         if: always()
         run: |
@@ -625,3 +626,4 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      # Free-threading wheels live in .github/workflows/build_ft_wheels.yml.

@@ -3,6 +3,7 @@
 #include "PybindWrapper.h"
 
 #include <base/types.h>
+#include <mutex>
 
 namespace CHDB {
 
@@ -52,6 +53,7 @@ private:
 	bool load_succeeded;
 	PythonImportCacheItem * parent;
 	py::handle object;
+	std::once_flag load_flag;
 };
 
 } // namespace CHDB
