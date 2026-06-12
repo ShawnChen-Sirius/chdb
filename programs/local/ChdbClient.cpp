@@ -235,6 +235,8 @@ CHDB::QueryResultPtr ChdbClient::executeMaterializedQuery(
         auto * local_connection = static_cast<LocalConnection *>(connection.get());
         size_t storage_rows_read = local_connection->getCHDBProgress().read_rows;
         size_t storage_bytes_read = local_connection->getCHDBProgress().read_bytes;
+        size_t rows_written = local_connection->getCHDBProgress().written_rows;
+        size_t bytes_written = local_connection->getCHDBProgress().written_bytes;
 
         if (format_str == CHUNK_COLLECT_FORMAT_NAME)
         {
@@ -245,7 +247,9 @@ CHDB::QueryResultPtr ChdbClient::executeMaterializedQuery(
                 getProcessedRows(),
                 getProcessedBytes(),
                 storage_rows_read,
-                storage_bytes_read);
+                storage_bytes_read,
+                rows_written,
+                bytes_written);
 #if USE_PYTHON
             python_table_cache->clear();
 #endif
@@ -258,7 +262,9 @@ CHDB::QueryResultPtr ChdbClient::executeMaterializedQuery(
             getProcessedRows(),
             getProcessedBytes(),
             storage_rows_read,
-            storage_bytes_read);
+            storage_bytes_read,
+            rows_written,
+            bytes_written);
 #if USE_PYTHON
         python_table_cache->clear();
 #endif
@@ -336,6 +342,8 @@ CHDB::QueryResultPtr ChdbClient::executeStreamingIterate(void * streaming_result
         const auto old_processed_bytes = getProcessedBytes();
         size_t old_storage_rows_read = local_connection->getCHDBProgress().read_rows;
         size_t old_storage_bytes_read = local_connection->getCHDBProgress().read_bytes;
+        size_t old_rows_written = local_connection->getCHDBProgress().written_rows;
+        size_t old_bytes_written = local_connection->getCHDBProgress().written_bytes;
         const auto old_elapsed_time = getElapsedTime();
 
         CHDB::QueryResultPtr res;
@@ -349,6 +357,8 @@ CHDB::QueryResultPtr ChdbClient::executeStreamingIterate(void * streaming_result
             const auto processed_bytes = getProcessedBytes();
             size_t storage_rows_read = local_connection->getCHDBProgress().read_rows;
             size_t storage_bytes_read = local_connection->getCHDBProgress().read_bytes;
+            size_t rows_written = local_connection->getCHDBProgress().written_rows;
+            size_t bytes_written = local_connection->getCHDBProgress().written_bytes;
             const auto elapsed_time = getElapsedTime();
 
             if (Poco::toLower(default_output_format) == CHUNK_COLLECT_FORMAT_NAME)
@@ -361,7 +371,9 @@ CHDB::QueryResultPtr ChdbClient::executeStreamingIterate(void * streaming_result
                     rows_read,
                     processed_bytes - old_processed_bytes,
                     storage_rows_read - old_storage_rows_read,
-                    storage_bytes_read - old_storage_bytes_read);
+                    storage_bytes_read - old_storage_bytes_read,
+                    rows_written - old_rows_written,
+                    bytes_written - old_bytes_written);
 
 #if USE_PYTHON
                 py::gil_scoped_acquire acquire;
@@ -388,7 +400,9 @@ CHDB::QueryResultPtr ChdbClient::executeStreamingIterate(void * streaming_result
                         processed_rows - old_processed_rows,
                         processed_bytes - old_processed_bytes,
                         storage_rows_read - old_storage_rows_read,
-                        storage_bytes_read - old_storage_bytes_read);
+                        storage_bytes_read - old_storage_bytes_read,
+                        rows_written - old_rows_written,
+                        bytes_written - old_bytes_written);
                 }
                 else
                 {

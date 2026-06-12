@@ -34,6 +34,8 @@ _chdb_result_rows_read
 _chdb_result_bytes_read
 _chdb_result_storage_rows_read
 _chdb_result_storage_bytes_read
+_chdb_result_rows_written
+_chdb_result_bytes_written
 _chdb_result_error
 
 _chdb_arrow_scan
