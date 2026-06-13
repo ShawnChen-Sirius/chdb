@@ -287,6 +287,7 @@ jobs:
           bash -x ./examples/runArrowTest.sh
           bash -x ./examples/runArrowStreamParse.sh
           bash -x ./examples/runArrowQueryTest.sh
+          bash -x ./examples/runInsertProgressTest.sh
       - name: Check ccache statistics
         run: |
           ccache -s
@@ -646,7 +647,7 @@ jobs:
             ./linux-aarch64-debuginfo.tar.gz
           overwrite: true
       - name: Upload pypi
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
         run: |
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
@@ -656,7 +657,7 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
       - name: Upload chdb-core-lite to pypi
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc')
         run: |
           export PATH="$HOME/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"

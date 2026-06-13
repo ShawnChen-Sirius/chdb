@@ -75,14 +75,18 @@ public:
         uint64_t rows_read_,
         uint64_t bytes_read_,
         uint64_t storage_rows_read_,
-        uint64_t storage_bytes_read_)
+        uint64_t storage_bytes_read_,
+        uint64_t rows_written_ = 0,
+        uint64_t bytes_written_ = 0)
         : QueryResult(QueryResultType::RESULT_TYPE_MATERIALIZED),
         result_buffer(std::move(result_buffer_)),
         elapsed(elapsed_),
         rows_read(rows_read_),
         bytes_read(bytes_read_),
         storage_rows_read(storage_rows_read_),
-        storage_bytes_read(storage_bytes_read_)
+        storage_bytes_read(storage_bytes_read_),
+        rows_written(rows_written_),
+        bytes_written(bytes_written_)
     {}
 
     explicit MaterializedQueryResult(String error_message_)
@@ -109,6 +113,12 @@ public:
     uint64_t bytes_read;
     uint64_t storage_rows_read;
     uint64_t storage_bytes_read;
+    /// Write progress of INSERT queries, accumulated from the engine's
+    /// CountingTransform progress callbacks. Includes rows/bytes written by
+    /// cascaded materialized views — same semantics as the HTTP interface's
+    /// X-ClickHouse-Summary.written_rows.
+    uint64_t rows_written;
+    uint64_t bytes_written;
 };
 
 /// Raw Chunk-bag query result. Produced by ChunkCollectorOutputFormat-backed
@@ -124,7 +134,9 @@ public:
         uint64_t rows_read_,
         uint64_t bytes_read_,
         uint64_t storage_rows_read_,
-        uint64_t storage_bytes_read_)
+        uint64_t storage_bytes_read_,
+        uint64_t rows_written_ = 0,
+        uint64_t bytes_written_ = 0)
         : QueryResult(QueryResultType::RESULT_TYPE_CHUNK),
         chunks(std::move(chunks_)),
         header(header_),
@@ -132,7 +144,9 @@ public:
         rows_read(rows_read_),
         bytes_read(bytes_read_),
         storage_rows_read(storage_rows_read_),
-        storage_bytes_read(storage_bytes_read_)
+        storage_bytes_read(storage_bytes_read_),
+        rows_written(rows_written_),
+        bytes_written(bytes_written_)
     {}
 
     explicit ChunkQueryResult(String error_message_)
@@ -152,6 +166,8 @@ public:
     uint64_t bytes_read;
     uint64_t storage_rows_read;
     uint64_t storage_bytes_read;
+    uint64_t rows_written;
+    uint64_t bytes_written;
 };
 
 using QueryResultPtr = std::unique_ptr<QueryResult>;
