@@ -13,7 +13,7 @@
 //! RowBinary-serialized result column. A buffer handle points at an 8-byte
 //! {ptr: u32, size: u32} header.
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{alloc, dealloc, handle_alloc_error, Layout};
 
 #[repr(C)]
 struct WasmBuffer {
@@ -36,9 +36,18 @@ pub extern "C" fn clickhouse_create_buffer(size: u32) -> u32 {
         let data = if size == 0 {
             4 as *mut u8
         } else {
-            alloc(Layout::from_size_align(size as usize, 1).unwrap())
+            let layout = Layout::from_size_align(size as usize, 1).unwrap();
+            let p = alloc(layout);
+            if p.is_null() {
+                handle_alloc_error(layout);
+            }
+            p
         };
-        let header = alloc(Layout::new::<WasmBuffer>()) as *mut WasmBuffer;
+        let header_layout = Layout::new::<WasmBuffer>();
+        let header = alloc(header_layout) as *mut WasmBuffer;
+        if header.is_null() {
+            handle_alloc_error(header_layout);
+        }
         (*header).ptr = data as u32;
         (*header).size = size;
         header as u32

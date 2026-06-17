@@ -82,6 +82,13 @@ class TestWasmUDFDisabled(unittest.TestCase):
         )
         proc = _run(["-c", snippet])
         out = proc.stdout + proc.stderr
+        # Verify both that the call was actually rejected (printed "ERR:" via
+        # the except branch) and not silently accepted (would have printed
+        # "NO_ERROR"). The substring check alone is not enough because any
+        # unrelated diagnostic mentioning "not enabled" could let the test
+        # false-pass even if the runtime accepted the CREATE FUNCTION.
+        self.assertNotIn("NO_ERROR", out, f"CREATE FUNCTION unexpectedly succeeded: {out!r}")
+        self.assertIn("ERR:", out, f"expected the CREATE FUNCTION to be rejected: {out!r}")
         self.assertIn("not enabled", out.lower(), f"unexpected output: {out!r}")
 
 
