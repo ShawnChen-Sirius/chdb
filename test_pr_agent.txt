@@ -1,0 +1,1 @@
+Validation commit with Actions disabled: no checks should run.
