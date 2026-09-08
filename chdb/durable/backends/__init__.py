@@ -1,12 +1,33 @@
-"""Storage-backend abstraction — the seam that makes a Durable Analytical
-Object's home vendor-neutral.
+"""The storage seam — what a durable object needs from a provider, and no more.
 
-A backend is a tiny key/value store scoped to one object's prefix, with a
-*conditional create* (`put_if_absent`) and *conditional replace*
-(`replace_if_match`) — the two primitives the single-writer lease is built on.
-Every provider implements the same `Backend` protocol; the on-disk *format*
-(a chDB File backup + WAL segments + JSON manifest) is identical everywhere,
-so moving an object between clouds is a byte copy.
+A backend is a small key/value store scoped to one object's prefix. Two of its
+six operations carry the whole protocol (§5.1):
+
+* **conditional create** (`put_bytes_if_absent` / `put_file_if_absent`), which
+  publishes an immutable WAL segment or checkpoint under a key nobody else can
+  take;
+* **conditional replace** (`replace_if_match`), which is both the head commit
+  and the lease fence — a superseded writer's next commit fails the
+  compare-and-set.
+
+Both must be the provider's own atomic conditional operation. A HEAD followed
+by a PUT is not a substitute: two writers can pass the same HEAD.
+
+Three more rules the implementations here follow:
+
+* an ETag is an opaque CAS token, never assumed to be an MD5 of the content;
+* a checkpoint is uploaded from a file and downloaded to a file, so a full
+  backup never has to be held in memory in one piece;
+* a download lands on a unique temporary path and is only renamed into place
+  once it verifies, so a partial transfer is never mistaken for the object.
+
+**Indeterminate responses.** A timeout is not a failure — the server may have
+committed. A backend raises `BackendAmbiguous` when it cannot tell, and the
+state machine reconciles it (§5.8) into success, `lease_fenced`, or
+`commit_ambiguous`. It never guesses on the backend's behalf.
+
+`delete_prefix` is not part of V1: V1 has no destroy and no GC. It is here for
+`Namespace.destroy`, which is a development convenience outside the protocol.
 
 `make_backend(url, sub)` maps a URL to a backend scoped to `<base>/<sub>`:
     local:/path/to/root
@@ -24,12 +45,18 @@ from urllib.parse import urlparse
 @runtime_checkable
 class Backend(Protocol):
     def get(self, key: str) -> Optional[bytes]: ...
+
     def get_with_etag(self, key: str): ...  # -> (Optional[bytes], Optional[str])
-    def put(self, key: str, data: bytes) -> None: ...
-    def put_if_absent(self, key: str, data: bytes): ...  # -> Optional[str] etag, or None if it exists
-    def head_etag(self, key: str) -> Optional[str]: ...
+
+    def put_bytes_if_absent(self, key: str, data: bytes) -> Optional[str]: ...
+
+    def put_file_if_absent(self, key: str, local_path: str) -> Optional[str]: ...
+
     def replace_if_match(self, key: str, data: bytes, etag: str) -> Optional[str]: ...
-    def delete_prefix(self, prefix: str = "") -> None: ...
+
+    def download_to_file(self, key: str, local_path: str) -> bool: ...
+
+    def delete_prefix(self, prefix: str = "") -> None: ...  # not V1
 
 
 def make_backend(url: str, sub: str = "") -> Backend:

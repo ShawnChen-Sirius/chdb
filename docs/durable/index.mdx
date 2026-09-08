@@ -116,12 +116,12 @@ A local TTL limits the logical contents of the current database. V1 does not del
 
 ## Binding status {#binding-status}
 
-Status as of September 4, 2026:
+Status as of September 8, 2026:
 
 | Component | Status |
 | --- | --- |
 | chdb-core | [PR #202](https://github.com/chdb-io/chdb-core/pull/202) is merged; [v26.7.2-rc.2](https://github.com/chdb-io/chdb-core/releases/tag/v26.7.2-rc.2) provides the backup, restore, and query-analysis C ABI |
-| Python | [`chdb.durable`](https://github.com/chdb-io/chdb/pull/616) shipped in v4.3.0; the implementation predates the frozen V1 protocol and still needs full V1 conformance work |
+| Python | [`chdb.durable`](https://github.com/chdb-io/chdb/pull/616) shipped in v4.3.0 and has been brought onto the frozen V1 protocol: it calls the v26.7.2-rc.2 backup, restore, and query-analysis ABI, writes the V1 `head.json`, and passes the §7.2/§7.3/§7.4 fixtures, scenarios, and fault matrix locally. Cross-binding fixture exchange is still pending |
 | Node.js | [PR #90](https://github.com/chdb-io/chdb-node/pull/90) implements the pure TypeScript control plane; the native adapter and npm release are still pending |
 | Go | Planned against the same core ABI and V1 conformance suite |
 | Rust | The Session and path lifecycle comes first, followed by the same Durable V1 protocol |
