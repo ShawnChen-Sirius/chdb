@@ -1,10 +1,16 @@
-"""Native Azure Blob backend. Lease primitive = `overwrite=False` create
-(ResourceExists), Azure's single-writer primitive; no S3 API needed."""
+"""Native Azure Blob backend.
+
+Conditional primitives: `overwrite=False` to create (a `ResourceExistsError`
+is the precondition failing) and an `IfNotModified` ETag match to replace. No
+S3 compatibility layer is involved.
+"""
 from __future__ import annotations
 
+import os
+import uuid
 from typing import Optional
 
-from ..errors import MissingDependency
+from ..errors import BackendAmbiguous, BackendError, MissingDependency
 
 
 class AzureBlobBackend:
@@ -24,6 +30,27 @@ class AzureBlobBackend:
     def _n(self, key: str) -> str:
         return f"{self.prefix}/{key}" if self.prefix else key
 
+    def _conditional(self, op, what: str):
+        from azure.core.exceptions import (
+            ResourceExistsError,
+            ResourceModifiedError,
+            ResourceNotFoundError,
+            ServiceRequestError,
+            ServiceResponseError,
+            HttpResponseError,
+        )
+        try:
+            return op()
+        except (ResourceExistsError, ResourceModifiedError, ResourceNotFoundError):
+            return None  # the precondition failed: a lost CAS, not an error
+        except (ServiceRequestError, ServiceResponseError) as e:
+            # The response never arrived; the service may still have applied it.
+            raise BackendAmbiguous(f"{what}: response indeterminate") from e
+        except HttpResponseError as e:
+            if e.status_code and 500 <= e.status_code < 600:
+                raise BackendAmbiguous(f"{what}: response indeterminate ({e.status_code})") from e
+            raise BackendError(f"{what}: {e}") from e
+
     def get(self, key: str) -> Optional[bytes]:
         return self.get_with_etag(key)[0]
 
@@ -35,35 +62,50 @@ class AzureBlobBackend:
         except ResourceNotFoundError:
             return (None, None)
 
-    def put(self, key: str, data: bytes) -> None:
-        self.cc.upload_blob(self._n(key), data, overwrite=True)
+    def put_bytes_if_absent(self, key: str, data: bytes) -> Optional[str]:
+        r = self._conditional(
+            lambda: self.cc.upload_blob(self._n(key), data, overwrite=False), f"create {key}")
+        return None if r is None else r.get("etag")
 
-    def put_if_absent(self, key: str, data: bytes) -> Optional[str]:
-        from azure.core.exceptions import ResourceExistsError
-        try:
-            r = self.cc.upload_blob(self._n(key), data, overwrite=False)
-            return r.get("etag")  # etag of the blob we just created
-        except ResourceExistsError:
-            return None
+    def put_file_if_absent(self, key: str, local_path: str) -> Optional[str]:
+        # Hand the SDK a file object so it chunks the upload itself, rather
+        # than materialising a whole checkpoint in memory (§5.1).
+        def op():
+            with open(local_path, "rb") as body:
+                return self.cc.upload_blob(self._n(key), body, overwrite=False)
 
-    def head_etag(self, key: str) -> Optional[str]:
-        from azure.core.exceptions import ResourceNotFoundError
-        try:
-            return self.cc.get_blob_client(self._n(key)).get_blob_properties().etag
-        except ResourceNotFoundError:
-            return None
+        r = self._conditional(op, f"create {key}")
+        return None if r is None else r.get("etag")
 
     def replace_if_match(self, key: str, data: bytes, etag: str) -> Optional[str]:
         from azure.core import MatchConditions
-        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+        r = self._conditional(
+            lambda: self.cc.upload_blob(self._n(key), data, overwrite=True, etag=etag,
+                                        match_condition=MatchConditions.IfNotModified),
+            f"replace {key}")
+        return None if r is None else r.get("etag")
+
+    def download_to_file(self, key: str, local_path: str) -> bool:
+        from azure.core.exceptions import ResourceNotFoundError
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        tmp = f"{local_path}.{uuid.uuid4().hex}.part"
         try:
-            r = self.cc.upload_blob(self._n(key), data, overwrite=True,
-                                    etag=etag, match_condition=MatchConditions.IfNotModified)
-            return r.get("etag")  # returned by the upload; no extra round-trip
-        except (ResourceModifiedError, ResourceNotFoundError):
-            return None  # etag mismatch or target gone — CAS did not match
+            stream = self.cc.download_blob(self._n(key))
+            with open(tmp, "wb") as handle:
+                stream.readinto(handle)
+        except ResourceNotFoundError:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            return False
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+        os.replace(tmp, local_path)  # publish only a complete transfer
+        return True
 
     def delete_prefix(self, prefix: str = "") -> None:
+        """Not V1 — see the note in `backends/__init__.py`."""
         # trailing "/" bounds the match to this object (not sibling "foobar/...");
         # empty scope (both empty) = the whole container.
         stripped = f"{self.prefix}/{prefix}".strip("/")
