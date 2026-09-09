@@ -13,7 +13,6 @@ on:
       - main
     paths-ignore:
       - 'docs/**'
-      - '.github/workflows/build_*_wheels*.yml'
       - '.github/workflows/external_clickhouse_integration.yaml'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -21,7 +20,6 @@ on:
       - main
     paths-ignore:
       - 'docs/**'
-      - '.github/workflows/build_*_wheels*.yml'
       - '.github/workflows/external_clickhouse_integration.yaml'
 
 jobs:
