@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="860" viewBox="0 0 1440 860" role="img" aria-labelledby="title desc">
+  <title id="title">chDB Durable write and restore demo</title>
+  <desc id="desc">Two code cards show writing to a durable object on machine one and restoring it on machine two.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080c14"/>
+      <stop offset="0.55" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#05080d"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141b27"/>
+      <stop offset="1" stop-color="#0f1621"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35a7ff"/>
+      <stop offset="1" stop-color="#70e0ff"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#40d66f"/>
+      <stop offset="1" stop-color="#a7f36c"/>
+    </linearGradient>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .title { font: 800 48px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f8fafc; }
+      .sub { font: 500 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #9aa8bb; }
+      .label { font: 800 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .14em; text-transform: uppercase; fill: #95a3b8; }
+      .labelBlue { fill: #9fd8ff; }
+      .labelGreen { fill: #b8f98a; }
+      .body { font: 600 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #dce7f4; }
+      .small { font: 500 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #aab7c8; }
+      .code { font: 500 17px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #d8e2ee; }
+      .kw { fill: #ff6b8a; font-weight: 700; }
+      .fn { fill: #8ecbff; }
+      .str { fill: #b9f27c; }
+      .num { fill: #ffd166; }
+      .muted { fill: #6f7d91; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="860" fill="url(#bg)"/>
+  <g opacity="0.22">
+    <path d="M40 120 H1400 M40 200 H1400 M40 280 H1400 M40 360 H1400 M40 440 H1400 M40 520 H1400 M40 600 H1400 M40 680 H1400" stroke="#183352" stroke-width="1"/>
+    <path d="M120 40 V820 M240 40 V820 M360 40 V820 M480 40 V820 M600 40 V820 M720 40 V820 M840 40 V820 M960 40 V820 M1080 40 V820 M1200 40 V820 M1320 40 V820" stroke="#183352" stroke-width="1"/>
+  </g>
+
+  <text x="64" y="76" class="title">One durable object, two machines</text>
+  <text x="64" y="114" class="sub">Machine 1 writes locally and advances durable state. Machine 2 opens the same object and replays what is left in WAL.</text>
+
+  <rect x="64" y="164" width="610" height="560" rx="18" fill="url(#card)" stroke="#2e3b50" stroke-width="2"/>
+  <rect x="88" y="188" width="118" height="34" rx="8" fill="#12253a" stroke="#27669c"/>
+  <text x="147" y="211" class="label labelBlue" text-anchor="middle">WRITE</text>
+  <text x="88" y="258" class="body">machine-1 opens <tspan fill="#8ecbff">Namespace</tspan> + <tspan fill="#ffd166">object_id</tspan></text>
+  <text x="88" y="296" class="code"><tspan class="kw">from</tspan> chdb <tspan class="kw">import</tspan> durable <tspan class="kw">as</tspan> cd</text>
+  <text x="88" y="338" class="code">url = <tspan class="str">"s3://my-bucket/agent-memory"</tspan></text>
+  <text x="88" y="374" class="code">object_id = <tspan class="str">"agent-demo-1"</tspan></text>
+  <text x="88" y="416" class="code">ns = cd.<tspan class="fn">Namespace</tspan>(url, owner=<tspan class="str">"machine-1"</tspan>)</text>
+  <text x="88" y="452" class="code">writer = ns.<tspan class="fn">open</tspan>(object_id)</text>
+  <text x="88" y="494" class="code">writer.<tspan class="fn">execute</tspan>(<tspan class="str">"CREATE TABLE memories (...)"</tspan>)</text>
+  <text x="88" y="530" class="code">writer.<tspan class="fn">execute</tspan>(<tspan class="str">"INSERT INTO memories VALUES (...)"</tspan>)</text>
+  <text x="88" y="588" class="code">writer.<tspan class="fn">flush</tspan>()</text>
+  <text x="88" y="624" class="code">writer.<tspan class="fn">checkpoint</tspan>()</text>
+  <text x="88" y="666" class="small">flush uploads WAL; checkpoint writes a fresh base snapshot.</text>
+
+  <rect x="766" y="164" width="610" height="560" rx="18" fill="url(#card)" stroke="#2e3b50" stroke-width="2"/>
+  <rect x="790" y="188" width="146" height="34" rx="8" fill="#17321f" stroke="#2f8f53"/>
+  <text x="863" y="211" class="label labelGreen" text-anchor="middle">RESTORE</text>
+  <text x="790" y="258" class="body">machine-2 opens the same <tspan fill="#ffd166">object_id</tspan></text>
+  <text x="790" y="296" class="code"><tspan class="kw">from</tspan> chdb <tspan class="kw">import</tspan> durable <tspan class="kw">as</tspan> cd</text>
+  <text x="790" y="338" class="code">url = <tspan class="str">"s3://my-bucket/agent-memory"</tspan></text>
+  <text x="790" y="374" class="code">object_id = <tspan class="str">"agent-demo-1"</tspan></text>
+  <text x="790" y="416" class="code">ns = cd.<tspan class="fn">Namespace</tspan>(url, owner=<tspan class="str">"machine-2"</tspan>)</text>
+  <text x="790" y="452" class="code">reader = ns.<tspan class="fn">open</tspan>(object_id, read_only=<tspan class="kw">True</tspan>)</text>
+  <text x="790" y="494" class="code">rows = reader.<tspan class="fn">query</tspan>(<tspan class="str">"SELECT ..."</tspan>)</text>
+  <text x="790" y="536" class="code"><tspan class="fn">print</tspan>(rows)</text>
+  <text x="790" y="594" class="small">Cold open restores base and replays flushed WAL.</text>
+
+  <path d="M686 400 H704" stroke="url(#blue)" stroke-width="4" fill="none" filter="url(#glow)" stroke-linecap="round"/>
+  <path d="M706 388 L734 400 L706 412" stroke="#70e0ff" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M736 400 H754" stroke="url(#blue)" stroke-width="4" fill="none" filter="url(#glow)" stroke-linecap="round"/>
+
+  <rect x="64" y="764" width="1312" height="58" rx="14" fill="#0e1724" stroke="#23344b"/>
+  <text x="96" y="801" class="body">Key boundary:</text>
+  <text x="248" y="801" class="small"><tspan fill="#8ecbff" font-weight="800">Namespace</tspan> points to the backend, <tspan fill="#ffd166" font-weight="800">object_id</tspan> names the object, and <tspan fill="#a7f36c" font-weight="800">flush()</tspan> / <tspan fill="#a7f36c" font-weight="800">checkpoint()</tspan> decide what has reached object storage.</text>
+</svg>

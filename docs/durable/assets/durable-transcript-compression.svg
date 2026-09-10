@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">chDB Durable transcript compression numbers</title>
+  <desc id="desc">Visual summary of transcript compression and screenshot byte share.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080c14"/>
+      <stop offset="0.55" stop-color="#0b1320"/>
+      <stop offset="1" stop-color="#060913"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#bef264"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#facc15"/>
+    </linearGradient>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .title { font: 800 46px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f8fafc; }
+      .sub { font: 500 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #9aa8bb; }
+      .label { font: 800 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .12em; fill: #8fa2b8; text-transform: uppercase; }
+      .name { font: 800 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #eef5ff; }
+      .small { font: 600 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #aeb9c9; }
+      .metric { font: 900 56px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f8fafc; }
+      .metricSmall { font: 900 36px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f8fafc; }
+      .mono { font: 700 18px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #dbe7f5; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="760" fill="url(#bg)"/>
+  <g opacity="0.18">
+    <path d="M44 100 H1396 M44 180 H1396 M44 260 H1396 M44 340 H1396 M44 420 H1396 M44 500 H1396 M44 580 H1396" stroke="#173554"/>
+    <path d="M120 40 V710 M240 40 V710 M360 40 V710 M480 40 V710 M600 40 V710 M720 40 V710 M840 40 V710 M960 40 V710 M1080 40 V710 M1200 40 V710 M1320 40 V710" stroke="#173554"/>
+  </g>
+
+  <text x="64" y="76" class="title">Append-only history compresses well, with one caveat</text>
+  <text x="64" y="114" class="sub">Agent transcripts are good MergeTree data. Screenshots and other blobs should stay out of the hot table.</text>
+
+  <rect x="64" y="164" width="330" height="474" rx="22" fill="#0e1724" stroke="#263b55" stroke-width="2"/>
+  <text x="96" y="210" class="label">sample</text>
+  <text x="96" y="284" class="metric">1.45 GB</text>
+  <text x="100" y="324" class="small">Claude Code transcript</text>
+  <text x="96" y="390" class="metricSmall" fill="#8ecbff">213,721 rows</text>
+  <text x="96" y="444" class="small">messages, tool calls, results, tokens</text>
+  <rect x="96" y="514" width="246" height="58" rx="14" fill="#101d2b" stroke="#254465"/>
+  <text x="118" y="550" class="mono">append-only JSONL</text>
+
+  <rect x="430" y="164" width="520" height="474" rx="22" fill="#0e1724" stroke="#263b55" stroke-width="2"/>
+  <text x="462" y="210" class="label">on-disk size after MergeTree</text>
+  <text x="462" y="286" class="small">raw JSONL</text>
+  <rect x="650" y="263" width="210" height="28" rx="14" fill="url(#purple)" filter="url(#glow)"/>
+  <text x="875" y="286" class="mono">1.45 GB</text>
+  <text x="462" y="366" class="small">LZ4</text>
+  <rect x="650" y="343" width="169" height="28" rx="14" fill="url(#orange)"/>
+  <text x="832" y="366" class="mono">991 MiB</text>
+  <text x="462" y="446" class="small">ZSTD(3)</text>
+  <rect x="650" y="423" width="89" height="28" rx="14" fill="url(#green)"/>
+  <text x="752" y="446" class="mono">521 MiB</text>
+  <rect x="462" y="516" width="420" height="86" rx="14" fill="#101d2b" stroke="#254465"/>
+  <text x="672" y="552" class="name" fill="#bef264" text-anchor="middle">text-only rows</text>
+  <text x="672" y="584" class="name" fill="#bef264" text-anchor="middle">compress about 3.94×</text>
+
+  <rect x="986" y="164" width="390" height="474" rx="22" fill="#0e1724" stroke="#263b55" stroke-width="2"/>
+  <text x="1018" y="210" class="label">the caveat</text>
+  <circle cx="1180" cy="338" r="112" fill="none" stroke="#1e2b3e" stroke-width="34"/>
+  <circle cx="1180" cy="338" r="112" fill="none" stroke="url(#orange)" stroke-width="34" stroke-dasharray="471 704" stroke-dashoffset="-22" transform="rotate(-90 1180 338)" filter="url(#glow)"/>
+  <text x="1134" y="328" class="metricSmall" fill="#facc15">67%</text>
+  <text x="1121" y="366" class="small">bytes</text>
+  <text x="1018" y="488" class="small">screenshots</text>
+  <text x="1018" y="524" class="mono">rows</text>
+  <rect x="1094" y="504" width="218" height="18" rx="9" fill="#1e2b3e"/>
+  <rect x="1094" y="504" width="6" height="18" rx="3" fill="#8ecbff"/>
+  <text x="1320" y="520" class="mono" fill="#8ecbff" text-anchor="end">0.8%</text>
+  <text x="1018" y="572" class="mono">bytes</text>
+  <rect x="1094" y="552" width="218" height="18" rx="9" fill="#1e2b3e"/>
+  <rect x="1094" y="552" width="146" height="18" rx="9" fill="url(#orange)" filter="url(#glow)"/>
+  <text x="1320" y="568" class="mono" fill="#facc15" text-anchor="end">67%</text>
+  <text x="1018" y="612" class="small">Small row share, huge byte share.</text>
+</svg>

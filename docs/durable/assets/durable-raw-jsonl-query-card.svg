@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">SQL straight over raw JSONL</title>
+  <desc id="desc">Two query cards showing chDB scanning raw Claude transcript JSONL files without an import step.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080c14"/>
+      <stop offset=".55" stop-color="#0b1320"/>
+      <stop offset="1" stop-color="#060913"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35a7ff"/>
+      <stop offset="1" stop-color="#70e0ff"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#40d66f"/>
+      <stop offset="1" stop-color="#a7f36c"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .title { font: 900 48px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f8fafc; letter-spacing: -.03em; }
+      .sub { font: 600 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #9aa8bb; }
+      .label { font: 900 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .14em; fill: #90a3b8; text-transform: uppercase; }
+      .cardTitle { font: 850 25px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f4f8ff; }
+      .small { font: 650 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #aeb9c9; }
+      .code { font: 600 16px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #d8e2ee; }
+      .comment { fill: #7f8ea3; }
+      .kw { fill: #ff6b8a; font-weight: 800; }
+      .fn { fill: #8ecbff; font-weight: 800; }
+      .str { fill: #b9f27c; }
+      .num { fill: #ffd166; }
+      .cyan { fill: #8ecbff; }
+      .green { fill: #a7f36c; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="760" fill="url(#bg)"/>
+  <g opacity="0.18">
+    <path d="M44 100 H1396 M44 180 H1396 M44 260 H1396 M44 340 H1396 M44 420 H1396 M44 500 H1396 M44 580 H1396 M44 660 H1396" stroke="#173554"/>
+    <path d="M120 40 V710 M240 40 V710 M360 40 V710 M480 40 V710 M600 40 V710 M720 40 V710 M840 40 V710 M960 40 V710 M1080 40 V710 M1200 40 V710 M1320 40 V710" stroke="#173554"/>
+  </g>
+
+  <text x="64" y="76" class="title">SQL straight over raw JSONL, no import step</text>
+  <text x="64" y="114" class="sub">Use chDB to inspect transcript files first. Materialize typed MergeTree tables only after the shape is clear.</text>
+
+  <rect x="64" y="156" width="632" height="500" rx="22" fill="#0e1724" stroke="#274867" stroke-width="2"/>
+  <rect x="92" y="184" width="122" height="34" rx="8" fill="#12253a" stroke="#27669c"/>
+  <text x="153" y="207" class="label cyan" text-anchor="middle">QUERY 1</text>
+  <text x="92" y="258" class="cardTitle">Event types from raw files</text>
+  <text x="92" y="294" class="small">Straight off the Claude project JSONL.</text>
+  <rect x="92" y="326" width="576" height="286" rx="16" fill="#0a111c" stroke="#1f344c"/>
+  <text x="116" y="362" class="code comment">-- event types, straight off the raw files: 1.45 GB</text>
+  <text x="116" y="390" class="code comment">-- no import, 0.22 s</text>
+  <text x="116" y="418" class="code comment">-- file() does not expand ~, spell out the home dir</text>
+  <text x="116" y="464" class="code"><tspan class="kw">SELECT</tspan> <tspan class="fn">JSONExtractString</tspan>(json, <tspan class="str">'type'</tspan>) <tspan class="kw">AS</tspan> type,</text>
+  <text x="116" y="492" class="code">       <tspan class="fn">count</tspan>() <tspan class="kw">AS</tspan> n</text>
+  <text x="116" y="520" class="code"><tspan class="kw">FROM</tspan> <tspan class="fn">file</tspan>(<tspan class="str">'/Users/you/.claude/projects/**/*.jsonl'</tspan>,</text>
+  <text x="116" y="548" class="code">          JSONAsString)</text>
+  <text x="116" y="576" class="code"><tspan class="kw">GROUP BY</tspan> type <tspan class="kw">ORDER BY</tspan> n <tspan class="kw">DESC</tspan>;</text>
+
+  <rect x="744" y="156" width="632" height="500" rx="22" fill="#0e1724" stroke="#274867" stroke-width="2"/>
+  <rect x="772" y="184" width="122" height="34" rx="8" fill="#17321f" stroke="#2f8f53"/>
+  <text x="833" y="207" class="label green" text-anchor="middle">QUERY 2</text>
+  <text x="772" y="258" class="cardTitle">grep, but with a query planner</text>
+  <text x="772" y="294" class="small">Keep the raw transcript cold, but still ask real SQL.</text>
+  <rect x="772" y="326" width="576" height="286" rx="16" fill="#0a111c" stroke="#1f344c"/>
+  <text x="796" y="374" class="code comment">-- grep, but with a query planner: 0.14 s</text>
+  <text x="796" y="430" class="code"><tspan class="kw">SELECT</tspan> <tspan class="fn">count</tspan>()</text>
+  <text x="796" y="470" class="code"><tspan class="kw">FROM</tspan> <tspan class="fn">file</tspan>(<tspan class="str">'/Users/you/.claude/projects/**/*.jsonl'</tspan>,</text>
+  <text x="796" y="510" class="code">          JSONAsString)</text>
+  <text x="796" y="550" class="code"><tspan class="kw">WHERE</tspan> json <tspan class="kw">LIKE</tspan> <tspan class="str">'%MergeTree%'</tspan>;</text>
+
+  <rect x="270" y="684" width="900" height="52" rx="16" fill="#101d2b" stroke="#254465"/>
+  <text x="720" y="718" class="small" text-anchor="middle">
+    <tspan class="cyan" font-weight="900">Explore first</tspan>
+    <tspan>. Promote hot fields into typed columns after the useful questions repeat.</tspan>
+  </text>
+</svg>
